@@ -1,0 +1,583 @@
+// Operanto — data model
+// Principle: every tenant-scoped row carries workspaceId and is indexed on it.
+// Cross-tenant isolation is enforced at the data-access layer (see src/lib/workspace.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────
+
+enum WorkspaceRole {
+  owner
+  admin
+  manager
+  agent
+  reviewer
+  client_viewer
+}
+
+enum MemberStatus {
+  active
+  invited
+  suspended
+}
+
+enum ChannelType {
+  instagram
+  facebook
+  whatsapp
+  email
+  sms
+  webchat
+  manual
+}
+
+enum ChannelStatus {
+  connected
+  disconnected
+  error
+  pending
+}
+
+enum ConversationStatus {
+  open
+  pending
+  waiting_customer
+  resolved
+  archived
+}
+
+enum Priority {
+  low
+  normal
+  high
+  urgent
+}
+
+enum MessageDirection {
+  inbound
+  outbound
+  internal
+}
+
+enum SenderType {
+  customer
+  agent
+  ai
+  system
+}
+
+enum Sentiment {
+  positive
+  neutral
+  frustrated
+  angry
+  confused
+  urgent
+  happy
+  disappointed
+}
+
+enum Intent {
+  pricing_inquiry
+  product_inquiry
+  service_inquiry
+  appointment_request
+  complaint
+  refund_request
+  delivery_question
+  technical_support
+  partnership_inquiry
+  spam
+  unclear
+  urgent_issue
+  qualified_lead
+}
+
+enum TaskStatus {
+  todo
+  in_progress
+  blocked
+  done
+  cancelled
+}
+
+enum SopStatus {
+  draft
+  approved
+  archived
+}
+
+enum ContentChannel {
+  instagram
+  facebook
+  tiktok
+  email
+  blog
+  ad
+  other
+}
+
+enum ContentStatus {
+  idea
+  draft
+  review
+  approved
+  published
+}
+
+enum AIActionStatus {
+  pending
+  suggested
+  accepted
+  rejected
+  edited
+  failed
+}
+
+enum InsightType {
+  common_question
+  objection
+  content_opportunity
+  performance_issue
+  lead_trend
+}
+
+enum InsightStatus {
+  open
+  acknowledged
+  actioned
+  dismissed
+}
+
+enum AutomationTrigger {
+  conversation_created
+  inbound_message
+  conversation_analyzed
+}
+
+// ─────────────────────────────────────────────────────────────
+// Core: org / users / membership
+// ─────────────────────────────────────────────────────────────
+
+model Workspace {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  plan            String   @default("free")
+  timezone        String   @default("Europe/Belgrade")
+  defaultLanguage String   @default("en")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  members         WorkspaceMember[]
+  channelAccounts ChannelAccount[]
+  customers       Customer[]
+  conversations   Conversation[]
+  messages        Message[]
+  internalNotes   InternalNote[]
+  tags            Tag[]
+  tasks           Task[]
+  sops            SOP[]
+  contentDrafts   ContentDraft[]
+  brandVoices     BrandVoice[]
+  aiActions       AIAction[]
+  insights        Insight[]
+  qaReviews       QAReview[]
+  auditLogs       AuditLog[]
+  automations     Automation[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  avatarUrl    String?
+  passwordHash String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships   WorkspaceMember[]
+  assignedConvs Conversation[]    @relation("ConversationAssignee")
+  sentMessages  Message[]         @relation("MessageSender")
+  internalNotes InternalNote[]
+  createdTasks  Task[]            @relation("TaskCreator")
+  assignedTasks Task[]            @relation("TaskAssignee")
+  createdSops   SOP[]             @relation("SopCreator")
+  approvedSops  SOP[]             @relation("SopApprover")
+  contentDrafts ContentDraft[]
+  aiActions     AIAction[]
+  qaAsAgent     QAReview[]        @relation("QaAgent")
+  qaAsReviewer  QAReview[]        @relation("QaReviewer")
+  auditLogs     AuditLog[]
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(agent)
+  status      MemberStatus  @default(active)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Channels & customers
+// ─────────────────────────────────────────────────────────────
+
+model ChannelAccount {
+  id                    String        @id @default(cuid())
+  workspaceId           String
+  type                  ChannelType
+  name                  String
+  externalAccountId     String?
+  accessTokenEncrypted  String?
+  refreshTokenEncrypted String?
+  status                ChannelStatus @default(pending)
+  metadata              Json?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@index([workspaceId])
+}
+
+model Customer {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  name          String?
+  email         String?
+  phone         String?
+  socialHandles Json?
+  language      String?
+  location      String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Inbox
+// ─────────────────────────────────────────────────────────────
+
+model Conversation {
+  id               String             @id @default(cuid())
+  workspaceId      String
+  customerId       String?
+  channelAccountId String?
+  channelType      ChannelType        @default(manual)
+  status           ConversationStatus @default(open)
+  priority         Priority           @default(normal)
+  assignedToUserId String?
+  subject          String?
+  lastMessageAt    DateTime?
+  lastInboundAt    DateTime?
+  lastOutboundAt   DateTime?
+  sentiment        Sentiment?
+  intent           Intent?
+  leadScore        Int?
+  summary          String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer       Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  channelAccount ChannelAccount?  @relation(fields: [channelAccountId], references: [id], onDelete: SetNull)
+  assignedTo     User?            @relation("ConversationAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  messages       Message[]
+  internalNotes  InternalNote[]
+  tags           ConversationTag[]
+  tasks          Task[]
+  qaReviews      QAReview[]
+  contentDrafts  ContentDraft[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([assignedToUserId])
+}
+
+model Message {
+  id                String           @id @default(cuid())
+  workspaceId       String
+  conversationId    String
+  direction         MessageDirection
+  senderType        SenderType
+  senderUserId      String?
+  externalMessageId String?
+  body              String
+  attachments       Json?
+  metadata          Json?
+  createdAt         DateTime         @default(now())
+
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User?        @relation("MessageSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([conversationId])
+}
+
+model InternalNote {
+  id             String   @id @default(cuid())
+  workspaceId    String
+  conversationId String
+  userId         String
+  body           String
+  createdAt      DateTime @default(now())
+
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
+
+model Tag {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  color       String   @default("#64748b")
+  createdAt   DateTime @default(now())
+
+  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversations ConversationTag[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model ConversationTag {
+  conversationId String
+  tagId          String
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  tag          Tag          @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, tagId])
+  @@index([tagId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Ops: tasks & SOPs
+// ─────────────────────────────────────────────────────────────
+
+model Task {
+  id                 String     @id @default(cuid())
+  workspaceId        String
+  title              String
+  description        String?
+  status             TaskStatus @default(todo)
+  priority           Priority   @default(normal)
+  assignedToUserId   String?
+  createdByUserId    String?
+  dueAt              DateTime?
+  linkedConversationId String?
+  linkedCustomerId   String?
+  linkedSopId        String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  workspace        Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assignedTo       User?         @relation("TaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  createdBy        User?         @relation("TaskCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  linkedConversation Conversation? @relation(fields: [linkedConversationId], references: [id], onDelete: SetNull)
+  linkedSop        SOP?          @relation(fields: [linkedSopId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([assignedToUserId])
+}
+
+model SOP {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  title            String
+  description      String?
+  body             String
+  category         String?
+  status           SopStatus @default(draft)
+  version          Int       @default(1)
+  createdByUserId  String?
+  approvedByUserId String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy  User?     @relation("SopCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  approvedBy User?     @relation("SopApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  tasks      Task[]
+
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Studio: brand voice & content
+// ─────────────────────────────────────────────────────────────
+
+model BrandVoice {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  name          String
+  description   String?
+  tone          String?
+  language      String   @default("en")
+  dos           String[]
+  donts         String[]
+  examplePhrases String[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contentDrafts ContentDraft[]
+
+  @@index([workspaceId])
+}
+
+model ContentDraft {
+  id                 String         @id @default(cuid())
+  workspaceId        String
+  title              String
+  channel            ContentChannel @default(instagram)
+  content            String
+  status             ContentStatus  @default(idea)
+  brandVoiceId       String?
+  sourceConversationId String?
+  sourceInsightId    String?
+  scheduledAt        DateTime?
+  createdByUserId    String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  workspace        Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  brandVoice       BrandVoice?   @relation(fields: [brandVoiceId], references: [id], onDelete: SetNull)
+  sourceConversation Conversation? @relation(fields: [sourceConversationId], references: [id], onDelete: SetNull)
+  sourceInsight    Insight?      @relation(fields: [sourceInsightId], references: [id], onDelete: SetNull)
+  createdBy        User?         @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI & analytics
+// ─────────────────────────────────────────────────────────────
+
+model AIAction {
+  id             String         @id @default(cuid())
+  workspaceId    String
+  userId         String?
+  actionType     String
+  inputContext   Json?
+  promptTemplate String?
+  model          String?
+  output         Json?
+  confidence     Float?
+  status         AIActionStatus @default(pending)
+  createdAt      DateTime       @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([workspaceId, actionType])
+}
+
+model Insight {
+  id          String        @id @default(cuid())
+  workspaceId String
+  type        InsightType
+  title       String
+  description String?
+  sourceData  Json?
+  priority    Priority      @default(normal)
+  status      InsightStatus @default(open)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contentDrafts ContentDraft[]
+
+  @@index([workspaceId])
+}
+
+model QAReview {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  conversationId  String?
+  agentUserId     String?
+  reviewerUserId  String?
+  score           Int?
+  criteriaScores  Json?
+  comments        String?
+  createdAt       DateTime @default(now())
+
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  agent        User?         @relation("QaAgent", fields: [agentUserId], references: [id], onDelete: SetNull)
+  reviewer     User?         @relation("QaReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Cross-cutting: audit
+// ─────────────────────────────────────────────────────────────
+
+model Automation {
+  id              String            @id @default(cuid())
+  workspaceId     String
+  name            String
+  trigger         AutomationTrigger @default(conversation_analyzed)
+  enabled         Boolean           @default(true)
+  conditions      Json? // array of { field, value }
+  actions         Json // array of action objects
+  lastRunAt       DateTime?
+  createdByUserId String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, trigger, enabled])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actorUserId String?
+  action      String
+  entity      String
+  entityId    String?
+  before      Json?
+  after       Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User?     @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([workspaceId, entity])
+}

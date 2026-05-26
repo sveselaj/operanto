@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: operanto-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: operanto
+      POSTGRES_PASSWORD: operanto
+      POSTGRES_DB: operanto
+    ports:
+      - "5433:5432"
+    volumes:
+      - operanto_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U operanto -d operanto"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  operanto_pgdata:
