@@ -14,6 +14,7 @@ export type Permission =
   | "conversations:read"
   | "conversations:reply" // send outbound to a customer
   | "conversations:triage" // assign, tag, change status
+  | "messaging:manage" // MediaSync: templates, consent, diagnostics
   | "tasks:manage"
   | "sops:create"
   | "sops:approve"
@@ -31,6 +32,7 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:read",
     "conversations:reply",
     "conversations:triage",
+    "messaging:manage",
     "tasks:manage",
     "sops:create",
     "sops:approve",
@@ -47,6 +49,7 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:read",
     "conversations:reply",
     "conversations:triage",
+    "messaging:manage",
     "tasks:manage",
     "sops:create",
     "sops:approve",
@@ -61,6 +64,7 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:read",
     "conversations:reply",
     "conversations:triage",
+    "messaging:manage",
     "tasks:manage",
     "sops:create",
     "content:manage",

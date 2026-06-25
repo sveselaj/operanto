@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
-import { Sparkles, StickyNote } from "lucide-react";
+import { Sparkles, StickyNote, Check, CheckCheck, Clock, AlertTriangle } from "lucide-react";
+import type { MessageStatus } from "@prisma/client";
 import { requireWorkspace } from "@/lib/workspace";
 import { can } from "@/lib/rbac";
 import {
@@ -13,11 +14,14 @@ import {
   channelLabel,
   intentLabel,
   sentimentLabel,
+  messageStatusLabel,
+  handlingLabel,
 } from "@/lib/labels";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { ConversationListPanel } from "@/components/inbox/conversation-list-panel";
 import { ConversationControls } from "@/components/inbox/conversation-controls";
+import { MediaSyncPanel } from "@/components/inbox/mediasync-panel";
 import { ReplyComposer } from "@/components/inbox/reply-composer";
 import { TagEditor } from "@/components/inbox/tag-editor";
 import { AddNoteForm } from "@/components/inbox/add-note-form";
@@ -46,6 +50,10 @@ export default async function ConversationPage({
 
   const canTriage = can(ctx.member.role, "conversations:triage");
   const canReply = can(ctx.member.role, "conversations:reply");
+  const canManageMessaging = can(ctx.member.role, "messaging:manage");
+  const channelConsent =
+    conversation.customer?.consents.find((c) => c.channelType === conversation.channelType)
+      ?.status ?? "unknown";
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -62,6 +70,9 @@ export default async function ConversationPage({
                   {conversation.customer?.name ?? "Unknown customer"}
                 </h2>
                 <Badge variant="default">{channelLabel[conversation.channelType]}</Badge>
+                <Badge variant={conversation.handling === "ai" ? "primary" : "outline"}>
+                  {handlingLabel[conversation.handling]}
+                </Badge>
               </div>
               <p className="truncate text-xs text-muted-foreground">
                 {conversation.subject ?? "No subject"}
@@ -100,11 +111,12 @@ export default async function ConversationPage({
                 >
                   {m.body}
                 </div>
-                <span className="mt-1 px-1 text-[11px] text-muted-foreground">
+                <span className="mt-1 flex items-center gap-1 px-1 text-[11px] text-muted-foreground">
                   {outbound
                     ? (m.sender?.name ?? "Agent")
                     : (conversation.customer?.name ?? "Customer")}
                   {m.senderType === "ai" && " · AI"} · {relativeTime(m.createdAt)}
+                  {outbound && <DeliveryStatus status={m.status} />}
                 </span>
               </div>
             );
@@ -176,6 +188,18 @@ export default async function ConversationPage({
           </dl>
         </section>
 
+        {/* MediaSync: human takeover & consent */}
+        <MediaSyncPanel
+          slug={slug}
+          conversationId={conversation.id}
+          customerId={conversation.customerId}
+          channelType={conversation.channelType}
+          handling={conversation.handling}
+          consent={channelConsent}
+          canReply={canReply}
+          canManageMessaging={canManageMessaging}
+        />
+
         {/* Tags */}
         <section>
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -221,5 +245,22 @@ function Row({ label, value }: { label: string; value?: string | null }) {
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="truncate font-medium">{value || "—"}</dd>
     </div>
+  );
+}
+
+/** Compact delivery-status indicator for outbound messages (MediaSync). */
+function DeliveryStatus({ status }: { status: MessageStatus }) {
+  const map = {
+    queued: { Icon: Clock, className: "text-muted-foreground" },
+    sent: { Icon: Check, className: "text-muted-foreground" },
+    delivered: { Icon: CheckCheck, className: "text-muted-foreground" },
+    read: { Icon: CheckCheck, className: "text-primary" },
+    failed: { Icon: AlertTriangle, className: "text-danger" },
+  } as const;
+  const { Icon, className } = map[status];
+  return (
+    <span className={cn("flex items-center gap-0.5", className)} title={messageStatusLabel[status]}>
+      · <Icon className="size-3" />
+    </span>
   );
 }

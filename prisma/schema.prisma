@@ -36,6 +36,8 @@ enum ChannelType {
   whatsapp
   email
   sms
+  telegram
+  viber
   webchat
   manual
 }
@@ -164,36 +166,90 @@ enum AutomationTrigger {
   conversation_analyzed
 }
 
+// ── MediaSync communication layer ──
+// These enums back the embedded communication module: delivery status,
+// consent, reusable templates, raw webhook intake, and connector sync jobs.
+
+enum MessageStatus {
+  queued
+  sent
+  delivered
+  read
+  failed
+}
+
+enum ConsentStatus {
+  unknown
+  opted_in
+  opted_out
+}
+
+enum TemplateStatus {
+  draft
+  approved
+  archived
+}
+
+enum WebhookStatus {
+  received
+  processed
+  duplicate
+  failed
+  ignored
+}
+
+enum SyncJobStatus {
+  running
+  success
+  error
+}
+
+// Who is currently driving a conversation: AI (autonomous, automations may
+// auto-reply) or a human who has taken over. Default human — Operanto's rule
+// is "AI suggests, human approves" unless a workspace enables AI autonomy.
+enum ConversationHandling {
+  ai
+  human
+}
+
 // ─────────────────────────────────────────────────────────────
 // Core: org / users / membership
 // ─────────────────────────────────────────────────────────────
 
 model Workspace {
-  id              String   @id @default(cuid())
-  name            String
-  slug            String   @unique
-  plan            String   @default("free")
-  timezone        String   @default("Europe/Belgrade")
-  defaultLanguage String   @default("en")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  name               String
+  slug               String   @unique
+  plan               String   @default("free")
+  timezone           String   @default("Europe/Belgrade")
+  defaultLanguage    String   @default("en")
+  // MediaSync layer config
+  defaultCountryCode String? // dialing code (e.g. "383") for E.164 phone identity matching
+  aiAutoReplyEnabled Boolean  @default(false) // allow AI to auto-send within policy
+  dataRetentionDays  Int? // null = retain indefinitely
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  members         WorkspaceMember[]
-  channelAccounts ChannelAccount[]
-  customers       Customer[]
-  conversations   Conversation[]
-  messages        Message[]
-  internalNotes   InternalNote[]
-  tags            Tag[]
-  tasks           Task[]
-  sops            SOP[]
-  contentDrafts   ContentDraft[]
-  brandVoices     BrandVoice[]
-  aiActions       AIAction[]
-  insights        Insight[]
-  qaReviews       QAReview[]
-  auditLogs       AuditLog[]
-  automations     Automation[]
+  members          WorkspaceMember[]
+  channelAccounts  ChannelAccount[]
+  customers        Customer[]
+  conversations    Conversation[]
+  messages         Message[]
+  internalNotes    InternalNote[]
+  tags             Tag[]
+  tasks            Task[]
+  sops             SOP[]
+  contentDrafts    ContentDraft[]
+  brandVoices      BrandVoice[]
+  aiActions        AIAction[]
+  insights         Insight[]
+  qaReviews        QAReview[]
+  auditLogs        AuditLog[]
+  automations      Automation[]
+  consents         Consent[]
+  messageTemplates MessageTemplate[]
+  webhookEvents    WebhookEvent[]
+  syncJobs         SyncJob[]
 }
 
 model User {
@@ -261,22 +317,29 @@ model ChannelAccount {
 }
 
 model Customer {
-  id            String   @id @default(cuid())
-  workspaceId   String
-  name          String?
-  email         String?
-  phone         String?
-  socialHandles Json?
-  language      String?
-  location      String?
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id              String   @id @default(cuid())
+  workspaceId     String
+  name            String?
+  email           String?
+  phone           String?
+  phoneNormalized String? // E.164-normalized phone for cross-channel identity matching
+  socialHandles   Json?
+  language        String?
+  location        String?
+  notes           String?
+  mergedIntoId    String? // set when this record was merged into another (identity resolution)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   conversations Conversation[]
+  consents      Consent[]
+  mergedInto    Customer?      @relation("CustomerMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom    Customer[]     @relation("CustomerMerge")
 
   @@index([workspaceId])
+  @@index([workspaceId, phoneNormalized])
+  @@index([workspaceId, email])
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -284,29 +347,32 @@ model Customer {
 // ─────────────────────────────────────────────────────────────
 
 model Conversation {
-  id               String             @id @default(cuid())
-  workspaceId      String
-  customerId       String?
-  channelAccountId String?
-  channelType      ChannelType        @default(manual)
-  status           ConversationStatus @default(open)
-  priority         Priority           @default(normal)
-  assignedToUserId String?
-  subject          String?
-  lastMessageAt    DateTime?
-  lastInboundAt    DateTime?
-  lastOutboundAt   DateTime?
-  sentiment        Sentiment?
-  intent           Intent?
-  leadScore        Int?
-  summary          String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  id                String               @id @default(cuid())
+  workspaceId       String
+  customerId        String?
+  channelAccountId  String?
+  channelType       ChannelType          @default(manual)
+  status            ConversationStatus   @default(open)
+  priority          Priority             @default(normal)
+  handling          ConversationHandling @default(human) // AI autonomous vs human takeover
+  takenOverByUserId String? // who took over from the AI, if anyone
+  takenOverAt       DateTime?
+  assignedToUserId  String?
+  subject           String?
+  lastMessageAt     DateTime?
+  lastInboundAt     DateTime?
+  lastOutboundAt    DateTime?
+  sentiment         Sentiment?
+  intent            Intent?
+  leadScore         Int?
+  summary           String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
 
-  workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  customer       Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  channelAccount ChannelAccount?  @relation(fields: [channelAccountId], references: [id], onDelete: SetNull)
-  assignedTo     User?            @relation("ConversationAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer       Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  channelAccount ChannelAccount?   @relation(fields: [channelAccountId], references: [id], onDelete: SetNull)
+  assignedTo     User?             @relation("ConversationAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
   messages       Message[]
   internalNotes  InternalNote[]
   tags           ConversationTag[]
@@ -330,14 +396,20 @@ model Message {
   body              String
   attachments       Json?
   metadata          Json?
+  status            MessageStatus    @default(sent) // delivery lifecycle (see MediaSync delivery service)
+  statusUpdatedAt   DateTime?
+  errorMessage      String?
+  templateId        String?
   createdAt         DateTime         @default(now())
 
-  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender       User?        @relation("MessageSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+  workspace    Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User?            @relation("MessageSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+  template     MessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
   @@index([conversationId])
+  @@index([workspaceId, externalMessageId])
 }
 
 model InternalNote {
@@ -385,26 +457,26 @@ model ConversationTag {
 // ─────────────────────────────────────────────────────────────
 
 model Task {
-  id                 String     @id @default(cuid())
-  workspaceId        String
-  title              String
-  description        String?
-  status             TaskStatus @default(todo)
-  priority           Priority   @default(normal)
-  assignedToUserId   String?
-  createdByUserId    String?
-  dueAt              DateTime?
+  id                   String     @id @default(cuid())
+  workspaceId          String
+  title                String
+  description          String?
+  status               TaskStatus @default(todo)
+  priority             Priority   @default(normal)
+  assignedToUserId     String?
+  createdByUserId      String?
+  dueAt                DateTime?
   linkedConversationId String?
-  linkedCustomerId   String?
-  linkedSopId        String?
-  createdAt          DateTime   @default(now())
-  updatedAt          DateTime   @updatedAt
+  linkedCustomerId     String?
+  linkedSopId          String?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
 
-  workspace        Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  assignedTo       User?         @relation("TaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
-  createdBy        User?         @relation("TaskCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  workspace          Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assignedTo         User?         @relation("TaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  createdBy          User?         @relation("TaskCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
   linkedConversation Conversation? @relation(fields: [linkedConversationId], references: [id], onDelete: SetNull)
-  linkedSop        SOP?          @relation(fields: [linkedSopId], references: [id], onDelete: SetNull)
+  linkedSop          SOP?          @relation(fields: [linkedSopId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
   @@index([workspaceId, status])
@@ -438,17 +510,17 @@ model SOP {
 // ─────────────────────────────────────────────────────────────
 
 model BrandVoice {
-  id            String   @id @default(cuid())
-  workspaceId   String
-  name          String
-  description   String?
-  tone          String?
-  language      String   @default("en")
-  dos           String[]
-  donts         String[]
+  id             String   @id @default(cuid())
+  workspaceId    String
+  name           String
+  description    String?
+  tone           String?
+  language       String   @default("en")
+  dos            String[]
+  donts          String[]
   examplePhrases String[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   contentDrafts ContentDraft[]
@@ -457,25 +529,25 @@ model BrandVoice {
 }
 
 model ContentDraft {
-  id                 String         @id @default(cuid())
-  workspaceId        String
-  title              String
-  channel            ContentChannel @default(instagram)
-  content            String
-  status             ContentStatus  @default(idea)
-  brandVoiceId       String?
+  id                   String         @id @default(cuid())
+  workspaceId          String
+  title                String
+  channel              ContentChannel @default(instagram)
+  content              String
+  status               ContentStatus  @default(idea)
+  brandVoiceId         String?
   sourceConversationId String?
-  sourceInsightId    String?
-  scheduledAt        DateTime?
-  createdByUserId    String?
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  sourceInsightId      String?
+  scheduledAt          DateTime?
+  createdByUserId      String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
-  workspace        Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  brandVoice       BrandVoice?   @relation(fields: [brandVoiceId], references: [id], onDelete: SetNull)
+  workspace          Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  brandVoice         BrandVoice?   @relation(fields: [brandVoiceId], references: [id], onDelete: SetNull)
   sourceConversation Conversation? @relation(fields: [sourceConversationId], references: [id], onDelete: SetNull)
-  sourceInsight    Insight?      @relation(fields: [sourceInsightId], references: [id], onDelete: SetNull)
-  createdBy        User?         @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  sourceInsight      Insight?      @relation(fields: [sourceInsightId], references: [id], onDelete: SetNull)
+  createdBy          User?         @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
 }
@@ -523,15 +595,15 @@ model Insight {
 }
 
 model QAReview {
-  id              String   @id @default(cuid())
-  workspaceId     String
-  conversationId  String?
-  agentUserId     String?
-  reviewerUserId  String?
-  score           Int?
-  criteriaScores  Json?
-  comments        String?
-  createdAt       DateTime @default(now())
+  id             String   @id @default(cuid())
+  workspaceId    String
+  conversationId String?
+  agentUserId    String?
+  reviewerUserId String?
+  score          Int?
+  criteriaScores Json?
+  comments       String?
+  createdAt      DateTime @default(now())
 
   workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
@@ -580,4 +652,105 @@ model AuditLog {
 
   @@index([workspaceId])
   @@index([workspaceId, entity])
+}
+
+// ─────────────────────────────────────────────────────────────
+// MediaSync communication layer (embedded module)
+//   Delivery status lives on Message; the models below cover consent,
+//   reusable outbound templates, raw webhook intake (idempotency + replay),
+//   and connector sync/observability. See docs/MEDIASYNC.md.
+// ─────────────────────────────────────────────────────────────
+
+// Per-customer, per-channel opt-in / opt-out state. Outbound sends check this
+// before delivering (canSend). One row per (customer, channel).
+model Consent {
+  id              String        @id @default(cuid())
+  workspaceId     String
+  customerId      String
+  channelType     ChannelType
+  status          ConsentStatus @default(unknown)
+  source          String? // inbound_message | manual | import | keyword_stop
+  reason          String?
+  updatedByUserId String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, channelType])
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+}
+
+// Reusable, approvable outbound templates (e.g. WhatsApp first-contact /
+// out-of-24h-window messages). Body uses {{name}} placeholders.
+model MessageTemplate {
+  id                 String         @id @default(cuid())
+  workspaceId        String
+  name               String
+  channelType        ChannelType    @default(whatsapp)
+  category           String? // marketing | utility | authentication
+  language           String         @default("en")
+  body               String
+  variables          String[]
+  status             TemplateStatus @default(draft)
+  externalTemplateId String? // provider-side template id, once registered
+  createdByUserId    String?
+  approvedByUserId   String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+// Raw inbound webhook intake — stored before processing so events can be
+// deduped (dedupeKey), replayed, and audited. workspaceId is resolved from the
+// channel account when known.
+model WebhookEvent {
+  id               String        @id @default(cuid())
+  workspaceId      String?
+  channelType      ChannelType
+  channelAccountId String?
+  eventType        String        @default("message") // message | status | unknown
+  dedupeKey        String? // provider event id, when present
+  signatureValid   Boolean       @default(false)
+  status           WebhookStatus @default(received)
+  headers          Json?
+  payload          Json
+  error            String?
+  receivedAt       DateTime      @default(now())
+  processedAt      DateTime?
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@unique([channelType, dedupeKey])
+  @@index([workspaceId])
+  @@index([channelType, receivedAt])
+}
+
+// Connector observability: one row per poll / backfill / send / diagnostic run.
+model SyncJob {
+  id               String        @id @default(cuid())
+  workspaceId      String
+  channelAccountId String?
+  channelType      ChannelType
+  operation        String // poll | backfill | send | diagnostic | webhook
+  status           SyncJobStatus @default(running)
+  itemsProcessed   Int           @default(0)
+  itemsFailed      Int           @default(0)
+  startedAt        DateTime      @default(now())
+  finishedAt       DateTime?
+  durationMs       Int?
+  detail           String?
+  error            String?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, channelType])
 }

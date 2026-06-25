@@ -20,6 +20,9 @@ async function main() {
 
   // ── Clean (child → parent) ────────────────────────────────
   await prisma.auditLog.deleteMany();
+  await prisma.webhookEvent.deleteMany();
+  await prisma.syncJob.deleteMany();
+  await prisma.consent.deleteMany();
   await prisma.automation.deleteMany();
   await prisma.qAReview.deleteMany();
   await prisma.aIAction.deleteMany();
@@ -31,6 +34,7 @@ async function main() {
   await prisma.internalNote.deleteMany();
   await prisma.conversationTag.deleteMany();
   await prisma.message.deleteMany();
+  await prisma.messageTemplate.deleteMany();
   await prisma.conversation.deleteMany();
   await prisma.tag.deleteMany();
   await prisma.customer.deleteMany();
@@ -61,6 +65,7 @@ async function main() {
       plan: "pro",
       timezone: "Europe/Belgrade",
       defaultLanguage: "en",
+      dataRetentionDays: 365,
       members: {
         create: [
           { userId: lana.id, role: "owner" },
@@ -125,6 +130,7 @@ async function main() {
       status: "open",
       priority: "high",
       assignedToUserId: driton.id,
+      handling: "ai",
       intent: "pricing_inquiry",
       sentiment: "positive",
       leadScore: 82,
@@ -148,7 +154,13 @@ async function main() {
   });
 
   const c2 = await prisma.customer.create({
-    data: { workspaceId: bloom.id, name: "Arta Krasniqi", language: "en" },
+    data: {
+      workspaceId: bloom.id,
+      name: "Arta Krasniqi",
+      language: "en",
+      phone: "+383 49 111 222",
+      phoneNormalized: "+38349111222",
+    },
   });
   const conv2 = await prisma.conversation.create({
     data: {
@@ -247,11 +259,63 @@ async function main() {
             senderType: "agent",
             senderUserId: driton.id,
             body: "We do! They're €45 and take about 45 minutes. Want me to book you in?",
+            status: "read",
+            statusUpdatedAt: daysAgo(2),
             createdAt: daysAgo(2),
           },
         ],
       },
     },
+  });
+
+  // MediaSync — consent (one opted-out to demo the send gate)
+  await prisma.consent.createMany({
+    data: [
+      {
+        workspaceId: bloom.id,
+        customerId: c1.id,
+        channelType: "instagram",
+        status: "opted_in",
+        source: "inbound_message",
+      },
+      {
+        workspaceId: bloom.id,
+        customerId: c2.id,
+        channelType: "whatsapp",
+        status: "opted_out",
+        source: "keyword_stop",
+        reason: "Customer replied STOP",
+      },
+    ],
+  });
+
+  // MediaSync — reusable outbound templates
+  await prisma.messageTemplate.createMany({
+    data: [
+      {
+        workspaceId: bloom.id,
+        name: "Booking confirmation",
+        channelType: "whatsapp",
+        category: "utility",
+        language: "en",
+        body: "Hi {{name}}, your {{service}} is booked for {{date}} at {{time}}. See you soon! ✨",
+        variables: ["name", "service", "date", "time"],
+        status: "approved",
+        createdByUserId: lana.id,
+        approvedByUserId: lana.id,
+      },
+      {
+        workspaceId: bloom.id,
+        name: "Re-engagement",
+        channelType: "whatsapp",
+        category: "marketing",
+        language: "en",
+        body: "Hi {{name}}, it's been a while — want to book your next visit?",
+        variables: ["name"],
+        status: "draft",
+        createdByUserId: marko.id,
+      },
+    ],
   });
 
   // SOPs

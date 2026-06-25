@@ -5,9 +5,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { db, runAutomations } = vi.hoisted(() => ({
   db: {
     channelAccount: { findUnique: vi.fn() },
-    customer: { findFirst: vi.fn(), create: vi.fn() },
+    customer: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     conversation: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
-    message: { create: vi.fn() },
+    message: { create: vi.fn(), findFirst: vi.fn() },
+    consent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     auditLog: { create: vi.fn() },
   },
   runAutomations: vi.fn<(...a: unknown[]) => Promise<number>>(async () => 0),
@@ -36,6 +37,12 @@ beforeEach(() => {
     type: "instagram",
   });
   db.customer.create.mockImplementation(async (a: { data: object }) => ({ id: "cust_1", ...a.data }));
+  // Identity backfill on an existing match returns the same record.
+  db.customer.update.mockImplementation(async (a: { where: { id: string }; data: object }) => ({
+    id: a.where.id,
+    workspaceId: "ws_1",
+    ...a.data,
+  }));
   db.conversation.create.mockImplementation(async (a: { data: object }) => ({
     id: "conv_1",
     customerId: "cust_1",

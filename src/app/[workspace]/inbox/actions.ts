@@ -1,11 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { ConversationStatus, Priority } from "@prisma/client";
+import type { ConversationStatus, Priority, ChannelType, ConsentStatus } from "@prisma/client";
 import { getWorkspaceContext } from "@/lib/workspace";
-import { ForbiddenError } from "@/lib/rbac";
+import { ForbiddenError, requirePermission } from "@/lib/rbac";
+import { prisma } from "@/lib/prisma";
 import * as conversations from "@/lib/services/conversations";
 import * as aiInbox from "@/lib/services/ai-inbox";
+import { takeOver, releaseToAi } from "@/lib/mediasync/takeover";
+import { setConsent } from "@/lib/mediasync/consent";
+import { audit } from "@/lib/audit";
 import type { DraftReplyOutput } from "@/lib/ai/tasks";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -118,6 +122,69 @@ export async function setTagsAction(
     async () => {
       const ctx = await ctxOrThrow(slug);
       await conversations.setTags(ctx, conversationId, tagIds);
+    },
+    slug,
+    conversationId,
+  );
+}
+
+// ── MediaSync: human takeover & consent ───────────────────────
+
+export async function takeOverAction(
+  slug: string,
+  conversationId: string,
+): Promise<ActionResult> {
+  return toResult(
+    async () => {
+      const ctx = await ctxOrThrow(slug);
+      await takeOver(ctx, conversationId);
+    },
+    slug,
+    conversationId,
+  );
+}
+
+export async function releaseToAiAction(
+  slug: string,
+  conversationId: string,
+): Promise<ActionResult> {
+  return toResult(
+    async () => {
+      const ctx = await ctxOrThrow(slug);
+      await releaseToAi(ctx, conversationId);
+    },
+    slug,
+    conversationId,
+  );
+}
+
+export async function setConsentAction(
+  slug: string,
+  conversationId: string,
+  customerId: string,
+  channelType: ChannelType,
+  status: ConsentStatus,
+): Promise<ActionResult> {
+  return toResult(
+    async () => {
+      const ctx = await ctxOrThrow(slug);
+      requirePermission(ctx.member.role, "messaging:manage");
+      // Cross-tenant guard: the customer must belong to this workspace.
+      const customer = await prisma.customer.findFirst({
+        where: { id: customerId, workspaceId: ctx.workspace.id },
+        select: { id: true },
+      });
+      if (!customer) throw new Error("Customer not found");
+      await setConsent(ctx.workspace.id, customerId, channelType, status, {
+        source: "manual",
+        updatedByUserId: ctx.userId,
+      });
+      await audit(ctx, {
+        action: "consent.set",
+        entity: "Customer",
+        entityId: customerId,
+        after: { channelType, status },
+      });
     },
     slug,
     conversationId,

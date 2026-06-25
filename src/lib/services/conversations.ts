@@ -9,6 +9,10 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/rbac";
 import { audit } from "@/lib/audit";
 import type { WorkspaceContext } from "@/lib/workspace";
+import { canSend } from "@/lib/mediasync/consent";
+import { getChannelCredentials } from "@/lib/mediasync/channel-credentials";
+import { getConnector } from "@/lib/channels";
+import type { MessageStatus } from "@prisma/client";
 
 export type ConversationFilters = {
   status?: ConversationStatus | "all";
@@ -79,7 +83,7 @@ export async function getConversation(ctx: WorkspaceContext, id: string) {
   return prisma.conversation.findFirst({
     where: { id, workspaceId: ctx.workspace.id },
     include: {
-      customer: true,
+      customer: { include: { consents: true } },
       assignedTo: true,
       channelAccount: true,
       tags: { include: { tag: true } },
@@ -99,17 +103,88 @@ export async function getConversation(ctx: WorkspaceContext, id: string) {
 async function assertConversation(ctx: WorkspaceContext, id: string) {
   const conv = await prisma.conversation.findFirst({
     where: { id, workspaceId: ctx.workspace.id },
-    select: { id: true, status: true, priority: true, assignedToUserId: true },
+    select: {
+      id: true,
+      status: true,
+      priority: true,
+      assignedToUserId: true,
+      customerId: true,
+      channelType: true,
+      channelAccountId: true,
+    },
   });
   if (!conv) throw new Error("Conversation not found");
   return conv;
 }
 
+type ChannelTypeOf = Awaited<ReturnType<typeof assertConversation>>["channelType"];
+
+/** Resolve the outbound address for a customer on a given channel. */
+function recipientFor(
+  customer: { phone: string | null; phoneNormalized: string | null; socialHandles: unknown },
+  channelType: ChannelTypeOf,
+): string | null {
+  const handles = (customer.socialHandles as Record<string, string> | null) ?? {};
+  switch (channelType) {
+    case "whatsapp":
+    case "sms":
+    case "viber": {
+      const phone = customer.phoneNormalized ?? customer.phone;
+      return phone ? phone.replace(/^\+/, "") : null; // providers want digits
+    }
+    case "facebook":
+    case "instagram":
+    case "telegram":
+      return handles.externalId ?? null;
+    default:
+      return null;
+  }
+}
+
 export async function sendReply(ctx: WorkspaceContext, id: string, body: string) {
   requirePermission(ctx.member.role, "conversations:reply");
-  await assertConversation(ctx, id);
+  const conv = await assertConversation(ctx, id);
   const text = body.trim();
   if (!text) throw new Error("Message is empty");
+
+  // MediaSync consent gate: never send to a customer who opted out of this channel.
+  if (conv.customerId) {
+    const gate = await canSend(ctx.workspace.id, conv.customerId, conv.channelType);
+    if (!gate.ok) throw new Error(gate.reason ?? "Customer has opted out of this channel");
+  }
+
+  // Web chat / manual deliver in-app immediately. Provider channels attempt a
+  // real send through the connector when configured; otherwise the message is
+  // recorded as "sent" (a delivery-status webhook later advances it).
+  const inApp = conv.channelType === "webchat" || conv.channelType === "manual";
+  let status: MessageStatus = inApp ? "delivered" : "sent";
+  let externalMessageId: string | null = null;
+  let errorMessage: string | null = null;
+
+  if (!inApp && conv.channelAccountId && conv.customerId) {
+    const connector = getConnector(conv.channelType);
+    const creds = (await getChannelCredentials(ctx.workspace.id, conv.channelAccountId)) ?? undefined;
+    if (connector.isConfigured(creds)) {
+      const customer = await prisma.customer.findUnique({
+        where: { id: conv.customerId },
+        select: { phone: true, phoneNormalized: true, socialHandles: true },
+      });
+      const to = customer ? recipientFor(customer, conv.channelType) : null;
+      if (!to) {
+        status = "failed";
+        errorMessage = `No ${conv.channelType} address on file for this customer.`;
+      } else {
+        try {
+          const res = await connector.sendMessage(to, text, creds);
+          externalMessageId = res.externalMessageId ?? null;
+          status = "sent";
+        } catch (e) {
+          status = "failed";
+          errorMessage = e instanceof Error ? e.message : "Send failed";
+        }
+      }
+    }
+  }
 
   const now = new Date();
   const message = await prisma.message.create({
@@ -120,11 +195,16 @@ export async function sendReply(ctx: WorkspaceContext, id: string, body: string)
       senderType: "agent",
       senderUserId: ctx.userId,
       body: text,
+      status,
+      statusUpdatedAt: now,
+      externalMessageId,
+      errorMessage,
     },
   });
+  // Sending implicitly puts a human in control of the conversation.
   await prisma.conversation.update({
     where: { id },
-    data: { lastMessageAt: now, lastOutboundAt: now },
+    data: { lastMessageAt: now, lastOutboundAt: now, handling: "human" },
   });
   await audit(ctx, { action: "conversation.reply", entity: "Message", entityId: message.id });
   return message;

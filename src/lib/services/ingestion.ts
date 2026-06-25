@@ -3,45 +3,54 @@ import type { Conversation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { runAutomationsForConversation } from "@/lib/services/automations";
 import type { NormalizedInbound } from "@/lib/channels";
+import { resolveCustomer } from "@/lib/mediasync/identity";
+import { applyInboundConsentSignal } from "@/lib/mediasync/consent";
 
 export type IngestResult = {
   conversationId: string;
   customerId: string;
   created: boolean; // whether a new conversation was created
+  duplicate?: boolean; // true when the inbound was already ingested (idempotent skip)
 };
 
 /**
- * Ingest a normalized inbound message: resolve the channel account (which
- * determines the workspace), upsert the customer, find-or-create an open
- * conversation, append the message, and fire automations.
+ * Ingest a normalized inbound message (MediaSync intake): resolve the channel
+ * account (which determines the workspace), resolve customer identity, find-or-
+ * create an open conversation, append the message idempotently, honor consent
+ * keywords, and fire automations.
  *
  * Runs with workspace authority (no logged-in user) — appropriate for webhooks.
  */
 export async function ingestInbound(input: NormalizedInbound): Promise<IngestResult> {
+  if (!input.channelAccountId) throw new Error("channelAccountId is required");
   const channelAccount = await prisma.channelAccount.findUnique({
     where: { id: input.channelAccountId },
+    include: { workspace: { select: { defaultCountryCode: true } } },
   });
   if (!channelAccount) throw new Error("Unknown channel account");
 
   const workspaceId = channelAccount.workspaceId;
-  const c = input.customer;
 
-  // ── Resolve / create the customer (scoped to the workspace) ──
-  let customer = await findCustomer(workspaceId, c);
-  if (!customer) {
-    const socialHandles: Record<string, string> = {};
-    if (c.handle) socialHandles[channelAccount.type] = c.handle;
-    if (c.externalId) socialHandles.externalId = c.externalId;
+  // ── Identity resolution (cross-channel match / create) ──
+  const customer = await resolveCustomer(workspaceId, input.customer, {
+    channelType: channelAccount.type,
+    defaultCountryCode: channelAccount.workspace?.defaultCountryCode,
+  });
 
-    customer = await prisma.customer.create({
-      data: {
-        workspaceId,
-        name: c.name ?? c.handle ?? "Website visitor",
-        email: c.email ?? null,
-        phone: c.phone ?? null,
-        socialHandles: Object.keys(socialHandles).length ? socialHandles : undefined,
-      },
+  // ── Idempotency: a provider may retry the same event ──
+  if (input.externalMessageId) {
+    const seen = await prisma.message.findFirst({
+      where: { workspaceId, externalMessageId: input.externalMessageId },
+      select: { id: true, conversationId: true },
     });
+    if (seen) {
+      return {
+        conversationId: seen.conversationId,
+        customerId: customer.id,
+        created: false,
+        duplicate: true,
+      };
+    }
   }
 
   // ── Find an active conversation on this channel, else create one ──
@@ -78,6 +87,8 @@ export async function ingestInbound(input: NormalizedInbound): Promise<IngestRes
       senderType: "customer",
       body: input.body,
       externalMessageId: input.externalMessageId ?? null,
+      status: "delivered", // inbound: it reached us
+      statusUpdatedAt: now,
     },
   });
   await prisma.conversation.update({
@@ -85,13 +96,21 @@ export async function ingestInbound(input: NormalizedInbound): Promise<IngestRes
     data: { lastMessageAt: now, lastInboundAt: now, status: "open" },
   });
 
+  // ── Honor STOP/START consent keywords ──
+  const consentChange = await applyInboundConsentSignal(
+    workspaceId,
+    customer.id,
+    channelAccount.type,
+    input.body,
+  );
+
   await prisma.auditLog.create({
     data: {
       workspaceId,
       action: "message.ingest",
       entity: "Conversation",
       entityId: conversation.id,
-      after: { channel: channelAccount.type, created },
+      after: { channel: channelAccount.type, created, consentChange },
     },
   });
 
@@ -103,16 +122,4 @@ export async function ingestInbound(input: NormalizedInbound): Promise<IngestRes
   await runAutomationsForConversation(run, "inbound_message", conversation.id, input.body);
 
   return { conversationId: conversation.id, customerId: customer.id, created };
-}
-
-async function findCustomer(
-  workspaceId: string,
-  c: NormalizedInbound["customer"],
-) {
-  const or: object[] = [];
-  if (c.email) or.push({ email: c.email });
-  if (c.phone) or.push({ phone: c.phone });
-  if (c.externalId) or.push({ socialHandles: { path: ["externalId"], equals: c.externalId } });
-  if (or.length === 0) return null;
-  return prisma.customer.findFirst({ where: { workspaceId, OR: or } });
 }

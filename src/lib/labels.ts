@@ -5,6 +5,9 @@ import type {
   Sentiment,
   ChannelType,
   TaskStatus,
+  MessageStatus,
+  ConsentStatus,
+  ConversationHandling,
 } from "@prisma/client";
 
 type BadgeVariant = "default" | "primary" | "success" | "warning" | "danger" | "outline";
@@ -68,10 +71,12 @@ export const sentimentLabel: Record<Sentiment, string> = {
 
 export const channelLabel: Record<ChannelType, string> = {
   instagram: "Instagram",
-  facebook: "Facebook",
+  facebook: "Messenger",
   whatsapp: "WhatsApp",
   email: "Email",
   sms: "SMS",
+  telegram: "Telegram",
+  viber: "Viber",
   webchat: "Web chat",
   manual: "Manual",
 };
@@ -90,4 +95,31 @@ export const taskStatusVariant: Record<TaskStatus, BadgeVariant> = {
   blocked: "danger",
   done: "success",
   cancelled: "default",
+};
+
+// ── MediaSync communication layer ──
+
+export const messageStatusLabel: Record<MessageStatus, string> = {
+  queued: "Queued",
+  sent: "Sent",
+  delivered: "Delivered",
+  read: "Read",
+  failed: "Failed",
+};
+
+export const consentStatusLabel: Record<ConsentStatus, string> = {
+  unknown: "Consent unknown",
+  opted_in: "Opted in",
+  opted_out: "Opted out",
+};
+
+export const consentStatusVariant: Record<ConsentStatus, BadgeVariant> = {
+  unknown: "outline",
+  opted_in: "success",
+  opted_out: "danger",
+};
+
+export const handlingLabel: Record<ConversationHandling, string> = {
+  ai: "AI handling",
+  human: "Human handling",
 };

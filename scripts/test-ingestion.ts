@@ -37,13 +37,18 @@ async function main() {
   check("unknown channel rejected", !isChannelType("carrier-pigeon"));
   const connector = getConnector("webchat");
   check("webchat connector accepts (verifySignature true)", connector.verifySignature(new Headers(), ""));
-  check("provider stub rejects signature", !getConnector("instagram").verifySignature(new Headers(), ""));
-  expectThrowSync("provider stub normalize throws", () => getConnector("whatsapp").normalizeWebhook({}));
+  check(
+    "unconfigured provider rejects signature",
+    !getConnector("instagram").verifySignature(new Headers(), ""),
+  );
+  expectThrowSync("unimplemented connector normalize throws", () =>
+    getConnector("email").normalizeWebhook({}),
+  );
   expectThrowSync("webchat normalize requires body", () =>
     connector.normalizeWebhook({ channelAccountId: webchat.id }),
   );
 
-  const normalized = connector.normalizeWebhook({
+  const [normalized] = connector.normalizeWebhook({
     channelAccountId: webchat.id,
     customer: { name: "Web Visitor", externalId: "web_test_123" },
     body: "Hi, what is the price for a hydrafacial?",
@@ -72,7 +77,7 @@ async function main() {
       channelAccountId: webchat.id,
       customer: { name: "Web Visitor", externalId: "web_test_123" },
       body: "Still there?",
-    }),
+    })[0],
   );
   check("second message reuses the open conversation", r2.conversationId === r1.conversationId);
   check("same customer reused", r2.customerId === r1.customerId);
