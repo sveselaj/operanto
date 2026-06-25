@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Sparkles,
   Inbox,
+  Target,
   CheckSquare,
   BookOpen,
   PenLine,
@@ -37,6 +38,7 @@ export function Sidebar({
   const items: NavItem[] = [
     { key: "command", label: "Command", href: `${base}/command`, icon: Sparkles },
     { key: "inbox", label: "Inbox", href: `${base}/inbox`, icon: Inbox },
+    { key: "opportunities", label: "Opportunities", href: `${base}/opportunities`, icon: Target },
     { key: "tasks", label: "Tasks", href: `${base}/tasks`, icon: CheckSquare },
     { key: "sops", label: "SOPs", href: `${base}/sops`, icon: BookOpen },
     { key: "studio", label: "Studio", href: `${base}/studio`, icon: PenLine },

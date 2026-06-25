@@ -23,6 +23,8 @@ async function main() {
   await prisma.webhookEvent.deleteMany();
   await prisma.syncJob.deleteMany();
   await prisma.consent.deleteMany();
+  await prisma.customerRequirement.deleteMany();
+  await prisma.opportunity.deleteMany();
   await prisma.automation.deleteMany();
   await prisma.qAReview.deleteMany();
   await prisma.aIAction.deleteMany();
@@ -631,6 +633,34 @@ async function main() {
         "4. Create a task to follow up if no reply in 48h.",
       ].join("\n"),
     },
+  });
+
+  // Lead Engine — promote Teuta's custom-necklace conversation to an opportunity
+  const lopp = await prisma.opportunity.create({
+    data: {
+      workspaceId: lumea.id,
+      customerId: lc1.id,
+      title: "Custom gold name necklace",
+      status: "open",
+      value: 120,
+      currency: "EUR",
+      source: "conversation",
+      primaryConversationId: lconv1.id,
+      assignedToUserId: blerim.id,
+      requirements: {
+        create: [
+          { workspaceId: lumea.id, key: "item_type", label: "Item", valueType: "text", value: "Name necklace", status: "provided", required: true, confidence: 0.9 },
+          { workspaceId: lumea.id, key: "material", label: "Material", valueType: "text", value: "Gold", status: "provided", required: true, confidence: 0.9 },
+          { workspaceId: lumea.id, key: "personalization_text", label: "Name to engrave", valueType: "text", value: null, status: "missing", required: true },
+          { workspaceId: lumea.id, key: "deadline", label: "Needed by", valueType: "date", value: "Before the 10th", status: "provided", required: true, confidence: 0.8 },
+          { workspaceId: lumea.id, key: "budget", label: "Budget", valueType: "number", value: null, status: "missing", required: false },
+        ],
+      },
+    },
+  });
+  await prisma.conversation.update({
+    where: { id: lconv1.id },
+    data: { opportunityId: lopp.id },
   });
 
   console.log("Seed complete.");

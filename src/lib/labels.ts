@@ -8,6 +8,7 @@ import type {
   MessageStatus,
   ConsentStatus,
   ConversationHandling,
+  OpportunityStatus,
 } from "@prisma/client";
 
 type BadgeVariant = "default" | "primary" | "success" | "warning" | "danger" | "outline";
@@ -122,4 +123,20 @@ export const consentStatusVariant: Record<ConsentStatus, BadgeVariant> = {
 export const handlingLabel: Record<ConversationHandling, string> = {
   ai: "AI handling",
   human: "Human handling",
+};
+
+// ── Operational layer ──
+
+export const opportunityStatusLabel: Record<OpportunityStatus, string> = {
+  open: "Open",
+  won: "Won",
+  lost: "Lost",
+  abandoned: "Abandoned",
+};
+
+export const opportunityStatusVariant: Record<OpportunityStatus, BadgeVariant> = {
+  open: "primary",
+  won: "success",
+  lost: "danger",
+  abandoned: "default",
 };

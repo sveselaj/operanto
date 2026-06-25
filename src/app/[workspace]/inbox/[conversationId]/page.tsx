@@ -28,6 +28,7 @@ import { AddNoteForm } from "@/components/inbox/add-note-form";
 import { AnalyzeButton } from "@/components/inbox/analyze-button";
 import { CreateTaskButton } from "@/components/inbox/create-task-button";
 import { GenerateContentButton } from "@/components/inbox/generate-content-button";
+import { PromoteToOpportunityButton } from "@/components/inbox/promote-to-opportunity-button";
 
 export default async function ConversationPage({
   params,
@@ -160,6 +161,13 @@ export default async function ConversationPage({
 
         {/* Quick actions */}
         <div className="space-y-2">
+          {can(ctx.member.role, "opportunities:manage") && (
+            <PromoteToOpportunityButton
+              slug={slug}
+              conversationId={conversation.id}
+              opportunityId={conversation.opportunityId}
+            />
+          )}
           {can(ctx.member.role, "tasks:manage") && (
             <CreateTaskButton
               slug={slug}

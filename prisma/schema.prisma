@@ -212,6 +212,22 @@ enum ConversationHandling {
   human
 }
 
+// ── Operational layer (Lead Engine — Phase A) ──
+// The commercial spine on top of the communication layer. See docs/WORKFLOW_ENGINE.md.
+
+enum OpportunityStatus {
+  open
+  won
+  lost
+  abandoned
+}
+
+enum RequirementStatus {
+  provided
+  missing
+  rejected
+}
+
 // ─────────────────────────────────────────────────────────────
 // Core: org / users / membership
 // ─────────────────────────────────────────────────────────────
@@ -227,6 +243,9 @@ model Workspace {
   defaultCountryCode String? // dialing code (e.g. "383") for E.164 phone identity matching
   aiAutoReplyEnabled Boolean  @default(false) // allow AI to auto-send within policy
   dataRetentionDays  Int? // null = retain indefinitely
+  // Operational layer config
+  defaultCurrency    String   @default("EUR")
+  defaultTaxRate     Float    @default(0)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -250,6 +269,8 @@ model Workspace {
   messageTemplates MessageTemplate[]
   webhookEvents    WebhookEvent[]
   syncJobs         SyncJob[]
+  opportunities    Opportunity[]
+  requirements     CustomerRequirement[]
 }
 
 model User {
@@ -274,6 +295,7 @@ model User {
   qaAsAgent     QAReview[]        @relation("QaAgent")
   qaAsReviewer  QAReview[]        @relation("QaReviewer")
   auditLogs     AuditLog[]
+  assignedOpportunities Opportunity[] @relation("OpportunityAssignee")
 }
 
 model WorkspaceMember {
@@ -334,6 +356,7 @@ model Customer {
   workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   conversations Conversation[]
   consents      Consent[]
+  opportunities Opportunity[]
   mergedInto    Customer?      @relation("CustomerMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
   mergedFrom    Customer[]     @relation("CustomerMerge")
 
@@ -358,6 +381,7 @@ model Conversation {
   takenOverByUserId String? // who took over from the AI, if anyone
   takenOverAt       DateTime?
   assignedToUserId  String?
+  opportunityId     String? // linked commercial opportunity (Lead Engine)
   subject           String?
   lastMessageAt     DateTime?
   lastInboundAt     DateTime?
@@ -373,6 +397,7 @@ model Conversation {
   customer       Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
   channelAccount ChannelAccount?   @relation(fields: [channelAccountId], references: [id], onDelete: SetNull)
   assignedTo     User?             @relation("ConversationAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  opportunity    Opportunity?      @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
   messages       Message[]
   internalNotes  InternalNote[]
   tags           ConversationTag[]
@@ -383,6 +408,7 @@ model Conversation {
   @@index([workspaceId])
   @@index([workspaceId, status])
   @@index([assignedToUserId])
+  @@index([opportunityId])
 }
 
 model Message {
@@ -753,4 +779,61 @@ model SyncJob {
 
   @@index([workspaceId])
   @@index([workspaceId, channelType])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Operational layer — Lead Engine (Phase A)
+//   Opportunity is the commercial spine; CustomerRequirement holds the
+//   structured facts collected from conversations. See docs/WORKFLOW_ENGINE.md.
+// ─────────────────────────────────────────────────────────────
+
+model Opportunity {
+  id                    String            @id @default(cuid())
+  workspaceId           String
+  customerId            String
+  title                 String?
+  status                OpportunityStatus @default(open)
+  stage                 String? // denormalized workflow step key (Phase E); free-form for now
+  value                 Decimal?          @db.Decimal(12, 2)
+  currency              String            @default("EUR")
+  source                String? // channel / campaign
+  primaryConversationId String?
+  assignedToUserId      String?
+  closedReason          String?
+  wonAt                 DateTime?
+  lostAt                DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  workspace    Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assignedTo   User?                 @relation("OpportunityAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  conversations Conversation[]
+  requirements CustomerRequirement[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([customerId])
+}
+
+model CustomerRequirement {
+  id              String            @id @default(cuid())
+  workspaceId     String
+  opportunityId   String
+  key             String // e.g. "window_count", "material", "location"
+  label           String
+  valueType       String // number | text | enum | date | bool
+  value           String? // stringified; typed by valueType
+  status          RequirementStatus @default(missing)
+  required        Boolean           @default(true)
+  confidence      Float?
+  sourceMessageId String? // provenance: which inbound message yielded it
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@unique([opportunityId, key])
+  @@index([workspaceId])
 }

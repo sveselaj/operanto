@@ -15,6 +15,7 @@ export type Permission =
   | "conversations:reply" // send outbound to a customer
   | "conversations:triage" // assign, tag, change status
   | "messaging:manage" // MediaSync: templates, consent, diagnostics
+  | "opportunities:manage" // Lead Engine: opportunities + requirements
   | "tasks:manage"
   | "sops:create"
   | "sops:approve"
@@ -33,6 +34,7 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:reply",
     "conversations:triage",
     "messaging:manage",
+    "opportunities:manage",
     "tasks:manage",
     "sops:create",
     "sops:approve",
@@ -50,6 +52,7 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:reply",
     "conversations:triage",
     "messaging:manage",
+    "opportunities:manage",
     "tasks:manage",
     "sops:create",
     "sops:approve",
@@ -65,6 +68,7 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:reply",
     "conversations:triage",
     "messaging:manage",
+    "opportunities:manage",
     "tasks:manage",
     "sops:create",
     "content:manage",
@@ -77,6 +81,7 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:read",
     "conversations:reply",
     "conversations:triage",
+    "opportunities:manage",
     "tasks:manage",
     "content:manage",
     "reports:view",
@@ -106,6 +111,7 @@ export function visibleModules(role: WorkspaceRole) {
   return {
     command: can(role, "conversations:read"),
     inbox: can(role, "conversations:read"),
+    opportunities: can(role, "opportunities:manage"),
     tasks: can(role, "tasks:manage"),
     sops: can(role, "sops:create") || can(role, "conversations:read"),
     studio: can(role, "content:manage"),

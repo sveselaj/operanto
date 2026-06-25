@@ -363,6 +363,82 @@ export const managerInsightsTask: AITaskDef<ManagerInsightsInput, ManagerInsight
   },
 };
 
+// ── extractRequirements (Lead Engine) ─────────────────────────
+const requirementValueTypes = ["number", "text", "enum", "date", "bool"] as const;
+
+const requirementItemSchema = z.object({
+  key: z.string().describe("stable snake_case key, e.g. window_count"),
+  label: z.string().describe("human-friendly label, e.g. Number of windows"),
+  valueType: z.enum(requirementValueTypes),
+  value: z.string().nullable().describe("the value if the customer stated it, else null"),
+  required: z.boolean().describe("whether this fact is essential to qualify/quote"),
+  confidence: z.number().min(0).max(1),
+});
+const extractRequirementsSchema = z.object({
+  requirements: z.array(requirementItemSchema).max(20),
+  confidence: z.number().min(0).max(1),
+});
+export type RequirementItem = z.infer<typeof requirementItemSchema>;
+export type ExtractRequirementsOutput = z.infer<typeof extractRequirementsSchema>;
+
+export const extractRequirementsTask: AITaskDef<ConversationAIInput, ExtractRequirementsOutput> = {
+  name: "extractRequirements",
+  version: "v1",
+  tier: "generation",
+  schema: extractRequirementsSchema,
+  toolName: "record_requirements",
+  toolDescription: "Record the structured facts needed to qualify and quote this lead.",
+  system: `You qualify sales leads for a business. From the conversation, extract the structured facts a salesperson needs to prepare a quote (quantities, dimensions/specs, materials/options, location, timeframe, budget). Use stable snake_case keys. Mark a fact 'required' when it is essential to quote. Set value to null when the customer hasn't stated it yet — list it anyway so the gap is visible. ${GUARDRAILS}`,
+  buildPrompt: (input) =>
+    `Channel: ${input.channel}\nCustomer: ${input.customerName ?? "(unknown)"}\n\nConversation:\n${transcript(input)}\n\nExtract the qualification requirements (provided and still-missing).`,
+  mock: (input) => {
+    const text = input.messages.map((m) => m.body).join(" ").toLowerCase();
+    const count = text.match(/(\d+)\s*(window|windows|door|doors|panel|unit|piece|room)/);
+    const material = text.match(/(pvc|aluminium|aluminum|wood|timber|glass)/);
+    return {
+      requirements: [
+        { key: "item_count", label: "Quantity needed", valueType: "number" as const, value: count ? count[1] : null, required: true, confidence: 0.6 },
+        { key: "material", label: "Preferred material", valueType: "text" as const, value: material ? material[0] : null, required: true, confidence: 0.55 },
+        { key: "location", label: "Property location", valueType: "text" as const, value: null, required: true, confidence: 0.5 },
+        { key: "timeframe", label: "Desired timeframe", valueType: "text" as const, value: /(week|month|asap|urgent|soon)/.test(text) ? "soon" : null, required: false, confidence: 0.5 },
+      ],
+      confidence: 0.6,
+    };
+  },
+};
+
+// ── requestInfo (draft a message asking for missing facts) ────
+export type RequestInfoInput = {
+  channel: string;
+  customerName?: string | null;
+  brandVoice?: BrandVoiceContext | null;
+  missingLabels: string[];
+};
+const requestInfoSchema = z.object({
+  message: z.string().describe("a short, friendly message asking for the missing details, in brand voice"),
+  confidence: z.number().min(0).max(1),
+});
+export type RequestInfoOutput = z.infer<typeof requestInfoSchema>;
+
+export const requestInfoTask: AITaskDef<RequestInfoInput, RequestInfoOutput> = {
+  name: "requestInfo",
+  version: "v1",
+  tier: "generation",
+  schema: requestInfoSchema,
+  toolName: "record_info_request",
+  toolDescription: "Draft a message asking the customer for the missing qualification details.",
+  system: `You draft a short, warm message asking a customer for the specific details still needed to prepare their quote. Match the brand voice. Ask only for the listed missing items, grouped naturally. A human reviews before sending. ${GUARDRAILS}`,
+  buildPrompt: (input) =>
+    `Channel: ${input.channel}\nCustomer: ${input.customerName ?? "(unknown)"}\nBrand voice:\n${brandVoiceBlock(input.brandVoice)}\n\nStill missing: ${input.missingLabels.join(", ")}\n\nDraft a message asking for these details.`,
+  mock: (input) => {
+    const name = input.customerName?.split(" ")[0] ?? "there";
+    return {
+      message: `Hi ${name}! To put together an accurate quote, could you share: ${input.missingLabels.join(", ")}? Thanks so much 🙏`,
+      confidence: 0.6,
+    };
+  },
+};
+
 export const AI_TASKS = {
   summarizeConversation: summarizeTask,
   classifyConversation: classifyTask,
@@ -370,4 +446,6 @@ export const AI_TASKS = {
   generateSOP: generateSOPTask,
   generateContent: generateContentTask,
   managerInsights: managerInsightsTask,
+  extractRequirements: extractRequirementsTask,
+  requestInfo: requestInfoTask,
 } as const;
