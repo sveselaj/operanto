@@ -4,6 +4,7 @@ import { requireWorkspace } from "@/lib/workspace";
 import { can } from "@/lib/rbac";
 import { getQuote } from "@/lib/services/quotes";
 import { listSellableProducts } from "@/lib/services/catalogue";
+import { pendingApproval } from "@/lib/services/approvals";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { QuoteBuilder } from "@/components/opportunities/quote-builder";
@@ -25,6 +26,7 @@ export default async function QuotePage({
 
   const products = await listSellableProducts(ctx);
   const canEdit = can(ctx.member.role, "quotes:manage");
+  const pendingSend = !!(await pendingApproval(ctx, "Quote", quote.id, "quote.send"));
 
   return (
     <>
@@ -46,6 +48,7 @@ export default async function QuotePage({
               opportunityId={id}
               quoteId={quote.id}
               canEdit={canEdit}
+              pendingSend={pendingSend}
               quote={{
                 status: quote.status,
                 currency: quote.currency,

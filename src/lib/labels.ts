@@ -10,6 +10,7 @@ import type {
   ConversationHandling,
   OpportunityStatus,
   QuoteStatus,
+  ApprovalStatus,
 } from "@prisma/client";
 
 type BadgeVariant = "default" | "primary" | "success" | "warning" | "danger" | "outline";
@@ -160,4 +161,24 @@ export const quoteStatusVariant: Record<QuoteStatus, BadgeVariant> = {
   accepted: "success",
   declined: "danger",
   expired: "default",
+};
+
+export const approvalStatusLabel: Record<ApprovalStatus, string> = {
+  pending: "Pending",
+  approved: "Approved",
+  rejected: "Rejected",
+  cancelled: "Cancelled",
+};
+
+export const approvalStatusVariant: Record<ApprovalStatus, BadgeVariant> = {
+  pending: "warning",
+  approved: "success",
+  rejected: "danger",
+  cancelled: "default",
+};
+
+/** Human label for a gated approval action. */
+export const approvalActionLabel: Record<string, string> = {
+  "quote.send": "Send quote",
+  "price.override": "Price override",
 };

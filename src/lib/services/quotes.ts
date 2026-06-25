@@ -1,13 +1,15 @@
 import "server-only";
 import type { Prisma, QuoteStatus, TaxMode } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requirePermission } from "@/lib/rbac";
+import { requirePermission, can } from "@/lib/rbac";
 import { audit } from "@/lib/audit";
 import type { WorkspaceContext } from "@/lib/workspace";
-import { computeQuoteTotals, type LineInput } from "@/lib/quote-totals";
+import { computeQuoteTotals } from "@/lib/quote-totals";
 import { evaluateRules } from "@/lib/business-rules";
 import { runAITask } from "@/lib/ai/service";
 import { draftQuoteTask } from "@/lib/ai/tasks";
+import { recomputeQuote } from "@/lib/services/quote-recompute";
+import { requestApproval } from "@/lib/services/approvals";
 
 const num = (d: Prisma.Decimal | number | null | undefined) => (d == null ? 0 : Number(d));
 
@@ -45,36 +47,6 @@ async function assertOpportunity(ctx: WorkspaceContext, opportunityId: string) {
     select: { id: true },
   });
   if (!o) throw new Error("Opportunity not found");
-}
-
-/** Recompute and persist quote + line totals from the current lines. */
-async function recompute(quoteId: string, taxMode: TaxMode) {
-  const lines = await prisma.quoteLine.findMany({
-    where: { quoteId },
-    orderBy: { position: "asc" },
-  });
-  const inputs: LineInput[] = lines.map((l) => ({
-    quantity: num(l.quantity),
-    unitPrice: num(l.unitPrice),
-    discount: num(l.discount),
-    taxRate: l.taxRate,
-  }));
-  const totals = computeQuoteTotals(inputs, taxMode);
-  await prisma.$transaction([
-    ...lines.map((l, i) =>
-      prisma.quoteLine.update({ where: { id: l.id }, data: { lineTotal: totals.lines[i].lineTotal } }),
-    ),
-    prisma.quote.update({
-      where: { id: quoteId },
-      data: {
-        subtotal: totals.subtotal,
-        discountTotal: totals.discountTotal,
-        taxTotal: totals.taxTotal,
-        total: totals.total,
-      },
-    }),
-  ]);
-  return totals;
 }
 
 export async function createQuote(ctx: WorkspaceContext, opportunityId: string) {
@@ -125,7 +97,7 @@ export async function addLine(ctx: WorkspaceContext, quoteId: string, input: Lin
       position: count,
     },
   });
-  await recompute(quoteId, quote.taxMode);
+  await recomputeQuote(quoteId);
   await audit(ctx, { action: "quote.line.add", entity: "Quote", entityId: quoteId });
 }
 
@@ -150,7 +122,7 @@ export async function updateLine(
       ...(patch.taxRate !== undefined ? { taxRate: patch.taxRate } : {}),
     },
   });
-  await recompute(line.quote.id, line.quote.taxMode);
+  await recomputeQuote(line.quote.id);
 }
 
 export async function removeLine(ctx: WorkspaceContext, lineId: string) {
@@ -161,7 +133,7 @@ export async function removeLine(ctx: WorkspaceContext, lineId: string) {
   });
   if (!line) throw new Error("Quote line not found");
   await prisma.quoteLine.delete({ where: { id: lineId } });
-  await recompute(line.quote.id, line.quote.taxMode);
+  await recomputeQuote(line.quote.id);
 }
 
 export async function updateQuote(
@@ -182,7 +154,7 @@ export async function updateQuote(
     if (patch.status === "accepted") data.acceptedAt = new Date();
   }
   await prisma.quote.update({ where: { id }, data });
-  if (patch.taxMode && patch.taxMode !== before.taxMode) await recompute(id, patch.taxMode);
+  if (patch.taxMode && patch.taxMode !== before.taxMode) await recomputeQuote(id);
   await audit(ctx, { action: "quote.update", entity: "Quote", entityId: id, after: patch });
 }
 
@@ -269,7 +241,7 @@ export async function draftQuote(ctx: WorkspaceContext, opportunityId: string) {
     .join("\n");
   if (notes) await prisma.quote.update({ where: { id: quote.id }, data: { notes } });
 
-  await recompute(quote.id, quote.taxMode);
+  await recomputeQuote(quote.id);
   await audit(ctx, {
     action: "quote.draft",
     entity: "Quote",
@@ -277,4 +249,50 @@ export async function draftQuote(ctx: WorkspaceContext, opportunityId: string) {
     after: { lines: res.data.lines.length, adjustments: evaluation.adjustments.length },
   });
   return quote;
+}
+
+// ── Approval-gated actions ─────────────────────────────────────
+
+/**
+ * Send a quote to the customer. Deciders (approvals:decide) send directly;
+ * everyone else files an approval request — the send happens on approval.
+ */
+export async function requestQuoteSend(
+  ctx: WorkspaceContext,
+  id: string,
+): Promise<{ sent: boolean }> {
+  requirePermission(ctx.member.role, "quotes:manage");
+  await assertQuote(ctx, id);
+  if (can(ctx.member.role, "approvals:decide")) {
+    await prisma.quote.update({ where: { id }, data: { status: "sent", sentAt: new Date() } });
+    await audit(ctx, { action: "quote.send", entity: "Quote", entityId: id });
+    return { sent: true };
+  }
+  await requestApproval(ctx, {
+    entityType: "Quote",
+    entityId: id,
+    action: "quote.send",
+    reason: "Send quote to customer",
+  });
+  return { sent: false };
+}
+
+/**
+ * Request approval for a manual price override (a discount beyond an agent's
+ * authority). On approval an adjustment line is added to the quote.
+ */
+export async function requestPriceOverride(
+  ctx: WorkspaceContext,
+  id: string,
+  input: { label: string; amount: number; reason?: string | null },
+): Promise<void> {
+  requirePermission(ctx.member.role, "quotes:manage");
+  await assertQuote(ctx, id);
+  await requestApproval(ctx, {
+    entityType: "Quote",
+    entityId: id,
+    action: "price.override",
+    reason: input.reason ?? null,
+    payload: { label: input.label, amount: input.amount },
+  });
 }

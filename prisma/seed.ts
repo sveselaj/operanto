@@ -23,6 +23,11 @@ async function main() {
   await prisma.webhookEvent.deleteMany();
   await prisma.syncJob.deleteMany();
   await prisma.consent.deleteMany();
+  await prisma.approvalRequest.deleteMany();
+  await prisma.workflowTransition.deleteMany();
+  await prisma.workflowInstance.deleteMany();
+  await prisma.workflowStep.deleteMany();
+  await prisma.workflowDefinition.deleteMany();
   await prisma.quoteLine.deleteMany();
   await prisma.quote.deleteMany();
   await prisma.product.deleteMany();
@@ -749,6 +754,70 @@ async function main() {
       },
     },
   });
+
+  // Workflow definition (Lumea) + a started instance on Teuta's opportunity
+  const wf = await prisma.workflowDefinition.create({
+    data: {
+      workspaceId: lumea.id,
+      key: "custom_order_quote",
+      name: "Custom order → quote",
+      vertical: "ecommerce",
+      version: 1,
+      active: true,
+      description: "Qualify a custom order, quote it, and close.",
+      steps: {
+        create: [
+          {
+            key: "collect_requirements",
+            name: "Collect requirements",
+            order: 0,
+            requiredRequirementKeys: ["item_type", "material", "personalization_text", "deadline"],
+            allowedActions: [
+              { type: "request_info", label: "Request missing info" },
+              { type: "draft_quote", label: "Draft quote" },
+            ] as Prisma.InputJsonValue,
+          },
+          {
+            key: "prepare_quote",
+            name: "Prepare & send quote",
+            order: 1,
+            requiredRequirementKeys: [],
+            allowedActions: [
+              { type: "send_quote", label: "Send quote" },
+              { type: "request_approval", label: "Request approval" },
+            ] as Prisma.InputJsonValue,
+          },
+          {
+            key: "await_decision",
+            name: "Await customer decision",
+            order: 2,
+            requiredRequirementKeys: [],
+            allowedActions: [{ type: "follow_up", label: "Follow up" }] as Prisma.InputJsonValue,
+          },
+          {
+            key: "won",
+            name: "Won",
+            order: 3,
+            requiredRequirementKeys: [],
+            allowedActions: [] as Prisma.InputJsonValue,
+          },
+        ],
+      },
+    },
+  });
+  await prisma.workflowInstance.create({
+    data: {
+      workspaceId: lumea.id,
+      opportunityId: lopp.id,
+      workflowDefinitionId: wf.id,
+      currentStepKey: "collect_requirements", // blocked: personalization_text still missing
+      status: "active",
+      transitions: {
+        create: { fromStepKey: null, toStepKey: "collect_requirements", actorUserId: blerim.id, reason: "started" },
+      },
+    },
+  });
+  await prisma.opportunity.update({ where: { id: lopp.id }, data: { stage: "collect_requirements" } });
 
   console.log("Seed complete.");
   console.log("  Bloom Studio  → lana@bloomstudio.test  (owner)");

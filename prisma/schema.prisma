@@ -248,6 +248,20 @@ enum TaxMode {
   inclusive
 }
 
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+  cancelled
+}
+
+enum WorkflowStatus {
+  active
+  blocked
+  completed
+  cancelled
+}
+
 // ─────────────────────────────────────────────────────────────
 // Core: org / users / membership
 // ─────────────────────────────────────────────────────────────
@@ -294,6 +308,9 @@ model Workspace {
   products         Product[]
   businessRules    BusinessRule[]
   quotes           Quote[]
+  approvalRequests ApprovalRequest[]
+  workflowDefs     WorkflowDefinition[]
+  workflowInstances WorkflowInstance[]
 }
 
 model User {
@@ -834,6 +851,7 @@ model Opportunity {
   conversations Conversation[]
   requirements CustomerRequirement[]
   quotes       Quote[]
+  workflow     WorkflowInstance?
 
   @@index([workspaceId])
   @@index([workspaceId, status])
@@ -960,4 +978,107 @@ model QuoteLine {
   product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([quoteId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Operational layer — Approvals (Phase D)
+//   Generic human-approval gate that wraps sensitive actions (quote send,
+//   price override, external pushes). See docs/WORKFLOW_ENGINE.md.
+// ─────────────────────────────────────────────────────────────
+
+model ApprovalRequest {
+  id                String         @id @default(cuid())
+  workspaceId       String
+  entityType        String // "Quote" | "Opportunity" | ...
+  entityId          String
+  action            String // "quote.send" | "price.override" | ...
+  status            ApprovalStatus @default(pending)
+  requestedByUserId String?
+  approverUserId    String? // optionally pre-assigned
+  decidedByUserId   String?
+  reason            String?
+  decisionNote      String?
+  payload           Json? // the proposed change being gated
+  createdAt         DateTime       @default(now())
+  decidedAt         DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, entityType, entityId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Operational layer — Workflow engine (Phase E)
+//   Generic, config-driven process: a WorkflowDefinition's steps declare the
+//   requirements needed to advance and the actions permitted. A WorkflowInstance
+//   tracks an opportunity's position. Verticals are data, not code.
+// ─────────────────────────────────────────────────────────────
+
+model WorkflowDefinition {
+  id          String   @id @default(cuid())
+  workspaceId String
+  key         String // "windows_quote"
+  name        String
+  vertical    String?
+  version     Int      @default(1)
+  active      Boolean  @default(true)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  steps     WorkflowStep[]
+  instances WorkflowInstance[]
+
+  @@unique([workspaceId, key, version])
+  @@index([workspaceId])
+}
+
+model WorkflowStep {
+  id                      String   @id @default(cuid())
+  workflowDefinitionId    String
+  key                     String // "collect_requirements"
+  name                    String
+  order                   Int
+  requiredRequirementKeys String[] // must be provided to leave this step
+  allowedActions          Json // [{type, label}]
+  autoAdvance             Boolean  @default(false)
+
+  definition WorkflowDefinition @relation(fields: [workflowDefinitionId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowDefinitionId, key])
+}
+
+model WorkflowInstance {
+  id                   String         @id @default(cuid())
+  workspaceId          String
+  opportunityId        String         @unique
+  workflowDefinitionId String
+  currentStepKey       String?
+  status               WorkflowStatus @default(active)
+  context              Json?
+  startedAt            DateTime       @default(now())
+  completedAt          DateTime?
+
+  workspace   Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  opportunity Opportunity          @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  definition  WorkflowDefinition   @relation(fields: [workflowDefinitionId], references: [id], onDelete: Restrict)
+  transitions WorkflowTransition[]
+
+  @@index([workspaceId, status])
+}
+
+model WorkflowTransition {
+  id                 String   @id @default(cuid())
+  workflowInstanceId String
+  fromStepKey        String?
+  toStepKey          String?
+  actorUserId        String? // null = system/AI
+  reason             String?
+  createdAt          DateTime @default(now())
+
+  instance WorkflowInstance @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
+
+  @@index([workflowInstanceId])
 }

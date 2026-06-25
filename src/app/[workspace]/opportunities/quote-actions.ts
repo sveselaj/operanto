@@ -98,6 +98,39 @@ export async function removeLineAction(
   }
 }
 
+export type SendResult = { ok: true; sent: boolean } | { ok: false; error: string };
+
+export async function requestQuoteSendAction(
+  slug: string,
+  opportunityId: string,
+  quoteId: string,
+): Promise<SendResult> {
+  try {
+    const ctx = await ctxOrThrow(slug);
+    const res = await quotes.requestQuoteSend(ctx, quoteId);
+    revalidateQuote(slug, opportunityId, quoteId);
+    return { ok: true, sent: res.sent };
+  } catch (e) {
+    return { ok: false, error: errorMessage(e) };
+  }
+}
+
+export async function requestPriceOverrideAction(
+  slug: string,
+  opportunityId: string,
+  quoteId: string,
+  input: { label: string; amount: number; reason?: string | null },
+): Promise<ActionResult> {
+  try {
+    const ctx = await ctxOrThrow(slug);
+    await quotes.requestPriceOverride(ctx, quoteId, input);
+    revalidateQuote(slug, opportunityId, quoteId);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: errorMessage(e) };
+  }
+}
+
 export async function updateQuoteAction(
   slug: string,
   opportunityId: string,

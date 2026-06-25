@@ -1,9 +1,10 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Target, MessageSquare, ListChecks, FileText } from "lucide-react";
+import { Target, MessageSquare, ListChecks, FileText, GitBranch } from "lucide-react";
 import { requireWorkspace } from "@/lib/workspace";
 import { can } from "@/lib/rbac";
 import { getOpportunity } from "@/lib/services/opportunities";
+import { getWorkflowForOpportunity } from "@/lib/services/workflow";
 import { listAssignableMembers } from "@/lib/services/conversations";
 import { requirementProgress } from "@/lib/opportunity-progress";
 import {
@@ -22,6 +23,7 @@ import { OpportunityControls } from "@/components/opportunities/opportunity-cont
 import { OpportunityAiButtons } from "@/components/opportunities/opportunity-ai-buttons";
 import { RequirementChecklist } from "@/components/opportunities/requirement-checklist";
 import { QuoteLauncher } from "@/components/opportunities/quote-launcher";
+import { WorkflowCard } from "@/components/opportunities/workflow-card";
 
 export default async function OpportunityPage({
   params,
@@ -36,9 +38,11 @@ export default async function OpportunityPage({
   if (!opp) notFound();
 
   const members = await listAssignableMembers(ctx);
+  const workflow = await getWorkflowForOpportunity(ctx, opp.id);
   const progress = requirementProgress(opp.requirements);
   const canEdit = can(ctx.member.role, "opportunities:manage");
   const canQuote = can(ctx.member.role, "quotes:manage");
+  const canWorkflow = can(ctx.member.role, "workflow:manage");
 
   return (
     <>
@@ -143,6 +147,22 @@ export default async function OpportunityPage({
 
         {/* Side */}
         <aside className="w-full shrink-0 space-y-5 lg:w-80">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-1.5">
+                <GitBranch className="size-4 text-primary" /> Workflow
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <WorkflowCard
+                slug={slug}
+                opportunityId={opp.id}
+                workflow={workflow}
+                canManage={canWorkflow}
+              />
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>Customer</CardTitle>

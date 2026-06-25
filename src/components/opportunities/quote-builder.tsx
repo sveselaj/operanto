@@ -14,6 +14,8 @@ import {
   updateLineAction,
   removeLineAction,
   updateQuoteAction,
+  requestQuoteSendAction,
+  requestPriceOverrideAction,
   type ActionResult,
 } from "@/app/[workspace]/opportunities/quote-actions";
 
@@ -39,7 +41,8 @@ export type BuilderQuote = {
 };
 export type BuilderProduct = { id: string; name: string; unitPrice: number; taxRate: number };
 
-const STATUSES: QuoteStatus[] = ["draft", "reviewed", "approved", "sent", "accepted", "declined", "expired"];
+// "sent" is excluded — sending goes through the approval gate (Send button).
+const STATUSES: QuoteStatus[] = ["draft", "reviewed", "approved", "accepted", "declined", "expired"];
 
 export function QuoteBuilder({
   slug,
@@ -49,6 +52,7 @@ export function QuoteBuilder({
   lines,
   products,
   canEdit,
+  pendingSend,
 }: {
   slug: string;
   opportunityId: string;
@@ -57,11 +61,16 @@ export function QuoteBuilder({
   lines: BuilderLine[];
   products: BuilderProduct[];
   canEdit: boolean;
+  pendingSend: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [productId, setProductId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [showDiscount, setShowDiscount] = useState(false);
+  const [discLabel, setDiscLabel] = useState("Discount");
+  const [discAmount, setDiscAmount] = useState("");
+  const [discReason, setDiscReason] = useState("");
 
   function run(fn: () => Promise<ActionResult>) {
     setError(null);
@@ -220,6 +229,78 @@ export function QuoteBuilder({
           <span className="tabular-nums">{formatMoney(quote.total, cur)}</span>
         </div>
       </div>
+
+      {/* Send + approvals */}
+      {canEdit && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+          {quote.status === "sent" ? (
+            <span className="text-sm text-success">Sent to customer ✓</span>
+          ) : pendingSend ? (
+            <span className="text-sm text-warning">Send pending approval…</span>
+          ) : (
+            <Button
+              size="sm"
+              disabled={pending || lines.length === 0}
+              onClick={() =>
+                startTransition(async () => {
+                  const res = await requestQuoteSendAction(slug, opportunityId, quoteId);
+                  if (!res.ok) setError(res.error);
+                  else {
+                    if (!res.sent) alert("Approval requested — a manager must approve before this is sent.");
+                    router.refresh();
+                  }
+                })
+              }
+            >
+              Send to customer
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => setShowDiscount((s) => !s)} disabled={pending}>
+            Request discount
+          </Button>
+        </div>
+      )}
+
+      {showDiscount && canEdit && (
+        <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border p-3">
+          <label className="text-xs font-medium text-muted-foreground">
+            Label
+            <Input value={discLabel} onChange={(e) => setDiscLabel(e.target.value)} className="mt-1 h-8 w-40" />
+          </label>
+          <label className="text-xs font-medium text-muted-foreground">
+            Amount (negative = discount)
+            <Input value={discAmount} inputMode="decimal" onChange={(e) => setDiscAmount(e.target.value)} placeholder="-20" className="mt-1 h-8 w-32" />
+          </label>
+          <label className="text-xs font-medium text-muted-foreground">
+            Reason
+            <Input value={discReason} onChange={(e) => setDiscReason(e.target.value)} className="mt-1 h-8 w-48" />
+          </label>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pending || discAmount === ""}
+            onClick={() =>
+              startTransition(async () => {
+                const res = await requestPriceOverrideAction(slug, opportunityId, quoteId, {
+                  label: discLabel || "Discount",
+                  amount: Number(discAmount),
+                  reason: discReason || null,
+                });
+                if (!res.ok) setError(res.error);
+                else {
+                  setShowDiscount(false);
+                  setDiscAmount("");
+                  setDiscReason("");
+                  alert("Discount approval requested.");
+                  router.refresh();
+                }
+              })
+            }
+          >
+            Request approval
+          </Button>
+        </div>
+      )}
 
       {/* Notes */}
       <div>

@@ -18,6 +18,8 @@ export type Permission =
   | "opportunities:manage" // Lead Engine: opportunities + requirements
   | "catalog:manage" // Catalogue: products + business rules
   | "quotes:manage" // Quoting: create/edit quotes
+  | "approvals:decide" // Approvals: approve/reject gated actions
+  | "workflow:manage" // Workflow engine: start/advance instances
   | "tasks:manage"
   | "sops:create"
   | "sops:approve"
@@ -39,6 +41,8 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "opportunities:manage",
     "catalog:manage",
     "quotes:manage",
+    "approvals:decide",
+    "workflow:manage",
     "tasks:manage",
     "sops:create",
     "sops:approve",
@@ -59,6 +63,8 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "opportunities:manage",
     "catalog:manage",
     "quotes:manage",
+    "approvals:decide",
+    "workflow:manage",
     "tasks:manage",
     "sops:create",
     "sops:approve",
@@ -77,6 +83,8 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "opportunities:manage",
     "catalog:manage",
     "quotes:manage",
+    "approvals:decide",
+    "workflow:manage",
     "tasks:manage",
     "sops:create",
     "content:manage",
@@ -91,6 +99,7 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:triage",
     "opportunities:manage",
     "quotes:manage",
+    "workflow:manage",
     "tasks:manage",
     "content:manage",
     "reports:view",
@@ -121,6 +130,7 @@ export function visibleModules(role: WorkspaceRole) {
     command: can(role, "conversations:read"),
     inbox: can(role, "conversations:read"),
     opportunities: can(role, "opportunities:manage"),
+    approvals: can(role, "approvals:decide") || can(role, "quotes:manage"),
     tasks: can(role, "tasks:manage"),
     sops: can(role, "sops:create") || can(role, "conversations:read"),
     studio: can(role, "content:manage"),
