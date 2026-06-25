@@ -76,6 +76,10 @@ export async function getOpportunity(ctx: WorkspaceContext, id: string) {
         select: { id: true, subject: true, channelType: true, status: true, lastMessageAt: true },
         orderBy: { lastMessageAt: "desc" },
       },
+      quotes: {
+        select: { id: true, status: true, total: true, currency: true, version: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+      },
     },
   });
 }

@@ -9,6 +9,7 @@ import type {
   ConsentStatus,
   ConversationHandling,
   OpportunityStatus,
+  QuoteStatus,
 } from "@prisma/client";
 
 type BadgeVariant = "default" | "primary" | "success" | "warning" | "danger" | "outline";
@@ -139,4 +140,24 @@ export const opportunityStatusVariant: Record<OpportunityStatus, BadgeVariant> =
   won: "success",
   lost: "danger",
   abandoned: "default",
+};
+
+export const quoteStatusLabel: Record<QuoteStatus, string> = {
+  draft: "Draft",
+  reviewed: "Reviewed",
+  approved: "Approved",
+  sent: "Sent",
+  accepted: "Accepted",
+  declined: "Declined",
+  expired: "Expired",
+};
+
+export const quoteStatusVariant: Record<QuoteStatus, BadgeVariant> = {
+  draft: "outline",
+  reviewed: "default",
+  approved: "primary",
+  sent: "warning",
+  accepted: "success",
+  declined: "danger",
+  expired: "default",
 };

@@ -16,6 +16,8 @@ export type Permission =
   | "conversations:triage" // assign, tag, change status
   | "messaging:manage" // MediaSync: templates, consent, diagnostics
   | "opportunities:manage" // Lead Engine: opportunities + requirements
+  | "catalog:manage" // Catalogue: products + business rules
+  | "quotes:manage" // Quoting: create/edit quotes
   | "tasks:manage"
   | "sops:create"
   | "sops:approve"
@@ -35,6 +37,8 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:triage",
     "messaging:manage",
     "opportunities:manage",
+    "catalog:manage",
+    "quotes:manage",
     "tasks:manage",
     "sops:create",
     "sops:approve",
@@ -53,6 +57,8 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:triage",
     "messaging:manage",
     "opportunities:manage",
+    "catalog:manage",
+    "quotes:manage",
     "tasks:manage",
     "sops:create",
     "sops:approve",
@@ -69,6 +75,8 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:triage",
     "messaging:manage",
     "opportunities:manage",
+    "catalog:manage",
+    "quotes:manage",
     "tasks:manage",
     "sops:create",
     "content:manage",
@@ -82,6 +90,7 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "conversations:reply",
     "conversations:triage",
     "opportunities:manage",
+    "quotes:manage",
     "tasks:manage",
     "content:manage",
     "reports:view",

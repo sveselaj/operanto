@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Stethoscope, MessageSquareText } from "lucide-react";
+import { Stethoscope, MessageSquareText, Package } from "lucide-react";
 import { requireWorkspace } from "@/lib/workspace";
 import { can } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
@@ -75,6 +75,20 @@ export default async function SettingsPage({
                 </div>
               </div>
             </Link>
+            {canManageChannels && (
+              <Link
+                href={`/${slug}/settings/catalogue`}
+                className="flex items-center gap-3 rounded-lg border border-border p-4 transition-colors hover:bg-muted"
+              >
+                <Package className="size-5 text-primary" />
+                <div>
+                  <div className="text-sm font-medium">Catalogue</div>
+                  <div className="text-xs text-muted-foreground">
+                    Products, services and pricing rules.
+                  </div>
+                </div>
+              </Link>
+            )}
           </div>
         )}
 

@@ -23,6 +23,10 @@ async function main() {
   await prisma.webhookEvent.deleteMany();
   await prisma.syncJob.deleteMany();
   await prisma.consent.deleteMany();
+  await prisma.quoteLine.deleteMany();
+  await prisma.quote.deleteMany();
+  await prisma.product.deleteMany();
+  await prisma.businessRule.deleteMany();
   await prisma.customerRequirement.deleteMany();
   await prisma.opportunity.deleteMany();
   await prisma.automation.deleteMany();
@@ -317,6 +321,15 @@ async function main() {
         status: "draft",
         createdByUserId: marko.id,
       },
+    ],
+  });
+
+  // Catalogue (Bloom)
+  await prisma.product.createMany({
+    data: [
+      { workspaceId: bloom.id, name: "Hydrafacial", type: "service", sku: "SVC-HYDRA", unitPrice: 80, currency: "EUR", taxRate: 0, unit: "session" },
+      { workspaceId: bloom.id, name: "Balayage", type: "service", sku: "SVC-BALAY", unitPrice: 120, currency: "EUR", taxRate: 0, unit: "session" },
+      { workspaceId: bloom.id, name: "Lash lift", type: "service", sku: "SVC-LASH", unitPrice: 45, currency: "EUR", taxRate: 0, unit: "session" },
     ],
   });
 
@@ -661,6 +674,80 @@ async function main() {
   await prisma.conversation.update({
     where: { id: lconv1.id },
     data: { opportunityId: lopp.id },
+  });
+
+  // Catalogue (Lumea) + business rules
+  const necklace = await prisma.product.create({
+    data: {
+      workspaceId: lumea.id,
+      name: "Custom name necklace",
+      type: "product",
+      sku: "NECK-CUSTOM",
+      unitPrice: 120,
+      currency: "EUR",
+      taxRate: 18,
+      unit: "each",
+    },
+  });
+  await prisma.product.createMany({
+    data: [
+      { workspaceId: lumea.id, name: "Gift wrapping", type: "service", unitPrice: 10, currency: "EUR", taxRate: 18, unit: "each" },
+      { workspaceId: lumea.id, name: "Express shipping", type: "service", unitPrice: 15, currency: "EUR", taxRate: 0, unit: "each" },
+    ],
+  });
+  await prisma.businessRule.createMany({
+    data: [
+      {
+        workspaceId: lumea.id,
+        name: "Minimum order €50",
+        type: "min_order",
+        priority: 0,
+        definition: { type: "min_order", amount: 50 } as Prisma.InputJsonValue,
+      },
+      {
+        workspaceId: lumea.id,
+        name: "Returning customer 5%",
+        type: "pricing_modifier",
+        enabled: false,
+        priority: 10,
+        definition: {
+          type: "pricing_modifier",
+          label: "Returning customer 5%",
+          kind: "discount",
+          percent: 5,
+        } as Prisma.InputJsonValue,
+      },
+    ],
+  });
+
+  // A drafted quote for Teuta's necklace opportunity (1 × €120 + 18% tax)
+  await prisma.quote.create({
+    data: {
+      workspaceId: lumea.id,
+      opportunityId: lopp.id,
+      status: "draft",
+      currency: "EUR",
+      taxMode: "exclusive",
+      subtotal: 120,
+      discountTotal: 0,
+      taxTotal: 21.6,
+      total: 141.6,
+      createdByUserId: blerim.id,
+      lines: {
+        create: [
+          {
+            productId: necklace.id,
+            description: "Custom name necklace",
+            quantity: 1,
+            unitPrice: 120,
+            discount: 0,
+            taxRate: 18,
+            lineTotal: 141.6,
+            position: 0,
+          },
+        ],
+      },
+    },
   });
 
   console.log("Seed complete.");

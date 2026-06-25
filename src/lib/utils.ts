@@ -15,6 +15,17 @@ export function initials(name?: string | null) {
     .join("");
 }
 
+/** Format a money amount (accepts number, Prisma Decimal, or string). */
+export function formatMoney(
+  value: { toString(): string } | number | null | undefined,
+  currency = "EUR",
+): string {
+  if (value == null) return "—";
+  const n = typeof value === "number" ? value : Number(value.toString());
+  if (Number.isNaN(n)) return "—";
+  return new Intl.NumberFormat("en", { style: "currency", currency }).format(n);
+}
+
 export function relativeTime(date: Date | string | null | undefined) {
   if (!date) return "";
   const d = typeof date === "string" ? new Date(date) : date;

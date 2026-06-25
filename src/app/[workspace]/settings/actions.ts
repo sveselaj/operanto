@@ -4,9 +4,11 @@ import { revalidatePath } from "next/cache";
 import type { ChannelType, TemplateStatus } from "@prisma/client";
 import { getWorkspaceContext } from "@/lib/workspace";
 import { ForbiddenError } from "@/lib/rbac";
+import type { ProductType } from "@prisma/client";
 import * as templates from "@/lib/mediasync/templates";
 import { runDiagnostic, type DiagnosticResult } from "@/lib/mediasync/diagnostics";
 import { setChannelCredentials } from "@/lib/mediasync/channel-credentials";
+import * as catalogue from "@/lib/services/catalogue";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -71,6 +73,72 @@ export async function setChannelCredentialsAction(
     slug,
     "",
   );
+}
+
+// ── Catalogue: products ───────────────────────────────────────
+
+export type ProductInput = {
+  name: string;
+  type: ProductType;
+  sku?: string | null;
+  description?: string | null;
+  unitPrice?: number | null;
+  taxRate?: number | null;
+  unit?: string | null;
+};
+
+export async function createProductAction(slug: string, input: ProductInput): Promise<ActionResult> {
+  return toResult(async () => {
+    const ctx = await ctxOrThrow(slug);
+    await catalogue.createProduct(ctx, { ...input, type: input.type });
+  }, slug, "catalogue");
+}
+
+export async function updateProductAction(slug: string, id: string, input: ProductInput): Promise<ActionResult> {
+  return toResult(async () => {
+    const ctx = await ctxOrThrow(slug);
+    await catalogue.updateProduct(ctx, id, input);
+  }, slug, "catalogue");
+}
+
+export async function setProductActiveAction(slug: string, id: string, active: boolean): Promise<ActionResult> {
+  return toResult(async () => {
+    const ctx = await ctxOrThrow(slug);
+    await catalogue.setProductActive(ctx, id, active);
+  }, slug, "catalogue");
+}
+
+export async function deleteProductAction(slug: string, id: string): Promise<ActionResult> {
+  return toResult(async () => {
+    const ctx = await ctxOrThrow(slug);
+    await catalogue.deleteProduct(ctx, id);
+  }, slug, "catalogue");
+}
+
+// ── Catalogue: business rules ─────────────────────────────────
+
+export async function createBusinessRuleAction(
+  slug: string,
+  input: { name: string; priority?: number; definition: unknown },
+): Promise<ActionResult> {
+  return toResult(async () => {
+    const ctx = await ctxOrThrow(slug);
+    await catalogue.createBusinessRule(ctx, input);
+  }, slug, "catalogue");
+}
+
+export async function setRuleEnabledAction(slug: string, id: string, enabled: boolean): Promise<ActionResult> {
+  return toResult(async () => {
+    const ctx = await ctxOrThrow(slug);
+    await catalogue.setBusinessRuleEnabled(ctx, id, enabled);
+  }, slug, "catalogue");
+}
+
+export async function deleteBusinessRuleAction(slug: string, id: string): Promise<ActionResult> {
+  return toResult(async () => {
+    const ctx = await ctxOrThrow(slug);
+    await catalogue.deleteBusinessRule(ctx, id);
+  }, slug, "catalogue");
 }
 
 // ── Templates ──────────────────────────────────────────────────

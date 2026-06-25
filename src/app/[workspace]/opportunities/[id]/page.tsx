@@ -1,13 +1,19 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Target, MessageSquare, ListChecks } from "lucide-react";
+import { Target, MessageSquare, ListChecks, FileText } from "lucide-react";
 import { requireWorkspace } from "@/lib/workspace";
 import { can } from "@/lib/rbac";
 import { getOpportunity } from "@/lib/services/opportunities";
 import { listAssignableMembers } from "@/lib/services/conversations";
 import { requirementProgress } from "@/lib/opportunity-progress";
-import { channelLabel, opportunityStatusLabel, opportunityStatusVariant } from "@/lib/labels";
-import { relativeTime } from "@/lib/utils";
+import {
+  channelLabel,
+  opportunityStatusLabel,
+  opportunityStatusVariant,
+  quoteStatusLabel,
+  quoteStatusVariant,
+} from "@/lib/labels";
+import { relativeTime, formatMoney } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { OpportunityControls } from "@/components/opportunities/opportunity-controls";
 import { OpportunityAiButtons } from "@/components/opportunities/opportunity-ai-buttons";
 import { RequirementChecklist } from "@/components/opportunities/requirement-checklist";
+import { QuoteLauncher } from "@/components/opportunities/quote-launcher";
 
 export default async function OpportunityPage({
   params,
@@ -31,6 +38,7 @@ export default async function OpportunityPage({
   const members = await listAssignableMembers(ctx);
   const progress = requirementProgress(opp.requirements);
   const canEdit = can(ctx.member.role, "opportunities:manage");
+  const canQuote = can(ctx.member.role, "quotes:manage");
 
   return (
     <>
@@ -99,6 +107,38 @@ export default async function OpportunityPage({
               />
             </CardContent>
           </Card>
+
+          {canQuote && (
+            <Card>
+              <CardHeader className="flex-row items-center justify-between">
+                <CardTitle className="flex items-center gap-1.5">
+                  <FileText className="size-4 text-primary" /> Quotes
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <QuoteLauncher slug={slug} opportunityId={opp.id} />
+                {opp.quotes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No quotes yet.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {opp.quotes.map((q) => (
+                      <Link
+                        key={q.id}
+                        href={`/${slug}/opportunities/${opp.id}/quotes/${q.id}`}
+                        className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm transition-colors hover:bg-muted"
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className="font-medium">Quote #{q.id.slice(-6)}</span>
+                          <Badge variant={quoteStatusVariant[q.status]}>{quoteStatusLabel[q.status]}</Badge>
+                        </span>
+                        <span className="tabular-nums font-medium">{formatMoney(q.total, q.currency)}</span>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Side */}

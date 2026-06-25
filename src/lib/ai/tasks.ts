@@ -439,6 +439,67 @@ export const requestInfoTask: AITaskDef<RequestInfoInput, RequestInfoOutput> = {
   },
 };
 
+// ── draftQuote (Quoting) ──────────────────────────────────────
+export type DraftQuoteInput = {
+  customerName?: string | null;
+  currency: string;
+  requirements: { label: string; value: string | null }[];
+  products: { name: string; sku: string | null; unitPrice: number | null; taxRate: number; unit: string | null }[];
+};
+
+const draftQuoteLineSchema = z.object({
+  description: z.string(),
+  quantity: z.number().positive(),
+  unitPrice: z.number().min(0),
+  taxRate: z.number().min(0),
+});
+const draftQuoteSchema = z.object({
+  lines: z.array(draftQuoteLineSchema).max(20),
+  notes: z.string().nullable(),
+  confidence: z.number().min(0).max(1),
+});
+export type DraftQuoteOutput = z.infer<typeof draftQuoteSchema>;
+
+export const draftQuoteTask: AITaskDef<DraftQuoteInput, DraftQuoteOutput> = {
+  name: "draftQuote",
+  version: "v1",
+  tier: "generation",
+  schema: draftQuoteSchema,
+  toolName: "record_quote_draft",
+  toolDescription: "Draft quote line items from the collected requirements and the product catalogue.",
+  system: `You prepare a draft quote for a salesperson. Build line items from the catalogue that match the collected requirements (quantities, materials/options). Use catalogue unit prices and tax rates; never invent prices for items not in the catalogue — instead describe them with a 0 price and note that pricing is needed. A human reviews and adjusts before sending. ${GUARDRAILS}`,
+  buildPrompt: (input) =>
+    `Customer: ${input.customerName ?? "(unknown)"}\nCurrency: ${input.currency}\n\nRequirements:\n${
+      input.requirements.map((r) => `- ${r.label}: ${r.value ?? "(not provided)"}`).join("\n") || "(none)"
+    }\n\nCatalogue:\n${
+      input.products
+        .map((p) => `- ${p.name}${p.sku ? ` [${p.sku}]` : ""}: ${p.unitPrice ?? "?"} ${input.currency}${p.unit ? `/${p.unit}` : ""} (tax ${p.taxRate}%)`)
+        .join("\n") || "(empty catalogue)"
+    }\n\nDraft the quote lines.`,
+  mock: (input) => {
+    const numericReq = input.requirements.find((r) => r.value && /^\d+$/.test(r.value.trim()));
+    const qty = numericReq ? Number(numericReq.value) : 1;
+    const product = input.products[0];
+    const lines = product
+      ? [
+          {
+            description: product.name,
+            quantity: qty,
+            unitPrice: product.unitPrice ?? 0,
+            taxRate: product.taxRate,
+          },
+        ]
+      : [];
+    return {
+      lines,
+      notes: product
+        ? `Drafted from ${input.requirements.length} requirement(s) (mock mode). Review quantities and add options as needed.`
+        : "No catalogue products available — add products to draft a quote.",
+      confidence: 0.55,
+    };
+  },
+};
+
 export const AI_TASKS = {
   summarizeConversation: summarizeTask,
   classifyConversation: classifyTask,
@@ -448,4 +509,5 @@ export const AI_TASKS = {
   managerInsights: managerInsightsTask,
   extractRequirements: extractRequirementsTask,
   requestInfo: requestInfoTask,
+  draftQuote: draftQuoteTask,
 } as const;
