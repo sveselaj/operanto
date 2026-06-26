@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Stethoscope, MessageSquareText, Package } from "lucide-react";
+import { Stethoscope, MessageSquareText, Package, Share2 } from "lucide-react";
 import { requireWorkspace } from "@/lib/workspace";
 import { can } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
@@ -28,6 +28,7 @@ export default async function SettingsPage({
   const w = ctx.workspace;
   const canManageMessaging = can(ctx.member.role, "messaging:manage");
   const canManageChannels = can(ctx.member.role, "channels:manage");
+  const canManageIntegrations = can(ctx.member.role, "integrations:manage");
 
   const channels = await prisma.channelAccount.findMany({
     where: { workspaceId: w.id },
@@ -85,6 +86,20 @@ export default async function SettingsPage({
                   <div className="text-sm font-medium">Catalogue</div>
                   <div className="text-xs text-muted-foreground">
                     Products, services and pricing rules.
+                  </div>
+                </div>
+              </Link>
+            )}
+            {canManageIntegrations && (
+              <Link
+                href={`/${slug}/settings/integrations`}
+                className="flex items-center gap-3 rounded-lg border border-border p-4 transition-colors hover:bg-muted"
+              >
+                <Share2 className="size-5 text-primary" />
+                <div>
+                  <div className="text-sm font-medium">Integrations</div>
+                  <div className="text-xs text-muted-foreground">
+                    CRM/ERP pushes — status &amp; retries.
                   </div>
                 </div>
               </Link>

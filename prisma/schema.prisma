@@ -262,6 +262,46 @@ enum WorkflowStatus {
   cancelled
 }
 
+enum AppointmentType {
+  survey
+  consultation
+  installation
+  support
+  delivery
+}
+
+enum AppointmentStatus {
+  proposed
+  scheduled
+  confirmed
+  completed
+  cancelled
+  no_show
+}
+
+enum IntegrationStatus {
+  pending
+  running
+  success
+  failed
+  retrying
+}
+
+enum DocumentKind {
+  photo
+  pdf
+  plan
+  form
+  other
+}
+
+enum DocumentStatus {
+  uploaded
+  processing
+  extracted
+  failed
+}
+
 // ─────────────────────────────────────────────────────────────
 // Core: org / users / membership
 // ─────────────────────────────────────────────────────────────
@@ -311,6 +351,9 @@ model Workspace {
   approvalRequests ApprovalRequest[]
   workflowDefs     WorkflowDefinition[]
   workflowInstances WorkflowInstance[]
+  appointments     Appointment[]
+  integrationActions IntegrationAction[]
+  documents        Document[]
 }
 
 model User {
@@ -336,6 +379,7 @@ model User {
   qaAsReviewer  QAReview[]        @relation("QaReviewer")
   auditLogs     AuditLog[]
   assignedOpportunities Opportunity[] @relation("OpportunityAssignee")
+  assignedAppointments  Appointment[] @relation("AppointmentAssignee")
 }
 
 model WorkspaceMember {
@@ -397,6 +441,8 @@ model Customer {
   conversations Conversation[]
   consents      Consent[]
   opportunities Opportunity[]
+  appointments  Appointment[]
+  documents     Document[]
   mergedInto    Customer?      @relation("CustomerMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
   mergedFrom    Customer[]     @relation("CustomerMerge")
 
@@ -852,6 +898,8 @@ model Opportunity {
   requirements CustomerRequirement[]
   quotes       Quote[]
   workflow     WorkflowInstance?
+  appointments Appointment[]
+  documents    Document[]
 
   @@index([workspaceId])
   @@index([workspaceId, status])
@@ -1081,4 +1129,113 @@ model WorkflowTransition {
   instance WorkflowInstance @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
 
   @@index([workflowInstanceId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Operational layer — Scheduling (Phase F)
+//   Appointments linked to opportunities; exported as ICS and (optionally)
+//   pushed to a calendar via the Integration Hub. See docs/WORKFLOW_ENGINE.md.
+// ─────────────────────────────────────────────────────────────
+
+model Appointment {
+  id               String            @id @default(cuid())
+  workspaceId      String
+  opportunityId    String?
+  customerId       String?
+  conversationId   String?
+  type             AppointmentType
+  status           AppointmentStatus @default(proposed)
+  title            String?
+  scheduledAt      DateTime?
+  durationMinutes  Int?
+  location         String?
+  assignedToUserId String?
+  externalEventId  String? // calendar-integration id
+  notes            String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  assignedTo  User?        @relation("AppointmentAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([workspaceId, scheduledAt])
+  @@index([opportunityId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Operational layer — Integration Hub (Phase G)
+//   Idempotent, retried record of a CRM/ERP/calendar/API operation — mirrors
+//   the MediaSync SyncJob/WebhookEvent pattern. See docs/WORKFLOW_ENGINE.md.
+// ─────────────────────────────────────────────────────────────
+
+model IntegrationAction {
+  id             String            @id @default(cuid())
+  workspaceId    String
+  provider       String // "hubspot" | "webhook" | "google_calendar" ...
+  operation      String // "upsert_contact" | "create_deal" | "create_event"
+  entityType     String?
+  entityId       String?
+  idempotencyKey String?
+  status         IntegrationStatus @default(pending)
+  attempts       Int               @default(0)
+  maxAttempts    Int               @default(3)
+  request        Json?
+  response       Json?
+  error          String?
+  scheduledAt    DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, idempotencyKey])
+  @@index([workspaceId, status])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Operational layer — Document AI (Phase H)
+//   Uploaded photos/PDFs/plans + structured extraction. Bytes live in a
+//   BlobStore (storageKey); extraction reuses AIAction. See docs/WORKFLOW_ENGINE.md.
+// ─────────────────────────────────────────────────────────────
+
+model Document {
+  id              String         @id @default(cuid())
+  workspaceId     String
+  customerId      String?
+  opportunityId   String?
+  conversationId  String?
+  messageId       String?
+  kind            DocumentKind   @default(other)
+  fileName        String
+  mimeType        String
+  sizeBytes       Int?
+  storageKey      String
+  status          DocumentStatus @default(uploaded)
+  createdByUserId String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  opportunity Opportunity?        @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  customer    Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  extraction  DocumentExtraction?
+
+  @@index([workspaceId])
+  @@index([opportunityId])
+}
+
+model DocumentExtraction {
+  id         String   @id @default(cuid())
+  documentId String   @unique
+  aiActionId String?
+  schemaKey  String?
+  data       Json
+  confidence Float?
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 }

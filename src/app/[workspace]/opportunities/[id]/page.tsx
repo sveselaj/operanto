@@ -1,10 +1,13 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Target, MessageSquare, ListChecks, FileText, GitBranch } from "lucide-react";
+import { Target, MessageSquare, ListChecks, FileText, GitBranch, CalendarClock, FileBox, Share2 } from "lucide-react";
 import { requireWorkspace } from "@/lib/workspace";
 import { can } from "@/lib/rbac";
+import { prisma } from "@/lib/prisma";
 import { getOpportunity } from "@/lib/services/opportunities";
 import { getWorkflowForOpportunity } from "@/lib/services/workflow";
+import { listAppointments } from "@/lib/services/appointments";
+import { listDocuments } from "@/lib/services/documents";
 import { listAssignableMembers } from "@/lib/services/conversations";
 import { requirementProgress } from "@/lib/opportunity-progress";
 import {
@@ -24,6 +27,9 @@ import { OpportunityAiButtons } from "@/components/opportunities/opportunity-ai-
 import { RequirementChecklist } from "@/components/opportunities/requirement-checklist";
 import { QuoteLauncher } from "@/components/opportunities/quote-launcher";
 import { WorkflowCard } from "@/components/opportunities/workflow-card";
+import { AppointmentsManager } from "@/components/opportunities/appointments-manager";
+import { DocumentsManager } from "@/components/opportunities/documents-manager";
+import { PushToCrmButton } from "@/components/opportunities/push-to-crm-button";
 
 export default async function OpportunityPage({
   params,
@@ -43,6 +49,23 @@ export default async function OpportunityPage({
   const canEdit = can(ctx.member.role, "opportunities:manage");
   const canQuote = can(ctx.member.role, "quotes:manage");
   const canWorkflow = can(ctx.member.role, "workflow:manage");
+  const canSchedule = can(ctx.member.role, "appointments:manage");
+  const canIntegrations = can(ctx.member.role, "integrations:manage");
+
+  const memberOpts = members.map((m) => ({ id: m.userId, name: m.user.name }));
+  const memberName = (id: string | null) => members.find((m) => m.userId === id)?.user.name ?? null;
+
+  const [appointments, documents, lastCrm] = await Promise.all([
+    canSchedule ? listAppointments(ctx, opp.id) : Promise.resolve([]),
+    listDocuments(ctx, opp.id),
+    canIntegrations
+      ? prisma.integrationAction.findFirst({
+          where: { workspaceId: ctx.workspace.id, entityType: "Opportunity", entityId: opp.id },
+          orderBy: { createdAt: "desc" },
+          select: { provider: true, status: true },
+        })
+      : Promise.resolve(null),
+  ]);
 
   return (
     <>
@@ -143,6 +166,60 @@ export default async function OpportunityPage({
               </CardContent>
             </Card>
           )}
+
+          {canSchedule && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5">
+                  <CalendarClock className="size-4 text-primary" /> Appointments
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <AppointmentsManager
+                  slug={slug}
+                  opportunityId={opp.id}
+                  canManage={canSchedule}
+                  members={memberOpts}
+                  appointments={appointments.map((a) => ({
+                    id: a.id,
+                    type: a.type,
+                    status: a.status,
+                    title: a.title,
+                    scheduledAt: a.scheduledAt ? a.scheduledAt.toISOString() : null,
+                    durationMinutes: a.durationMinutes,
+                    location: a.location,
+                    assignee: memberName(a.assignedToUserId),
+                  }))}
+                />
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-1.5">
+                <FileBox className="size-4 text-primary" /> Documents
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <DocumentsManager
+                slug={slug}
+                opportunityId={opp.id}
+                canManage={canEdit}
+                documents={documents.map((d) => ({
+                  id: d.id,
+                  fileName: d.fileName,
+                  kind: d.kind,
+                  status: d.status,
+                  sizeBytes: d.sizeBytes,
+                  createdAt: d.createdAt.toISOString(),
+                  extraction: d.extraction
+                    ? { data: (d.extraction.data as Record<string, string>) ?? {} }
+                    : null,
+                }))}
+              />
+            </CardContent>
+          </Card>
         </div>
 
         {/* Side */}
@@ -162,6 +239,19 @@ export default async function OpportunityPage({
               />
             </CardContent>
           </Card>
+
+          {canIntegrations && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5">
+                  <Share2 className="size-4 text-primary" /> Integrations
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <PushToCrmButton slug={slug} opportunityId={opp.id} last={lastCrm} />
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>

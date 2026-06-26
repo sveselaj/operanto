@@ -28,6 +28,10 @@ async function main() {
   await prisma.workflowInstance.deleteMany();
   await prisma.workflowStep.deleteMany();
   await prisma.workflowDefinition.deleteMany();
+  await prisma.appointment.deleteMany();
+  await prisma.documentExtraction.deleteMany();
+  await prisma.document.deleteMany();
+  await prisma.integrationAction.deleteMany();
   await prisma.quoteLine.deleteMany();
   await prisma.quote.deleteMany();
   await prisma.product.deleteMany();
@@ -818,6 +822,70 @@ async function main() {
     },
   });
   await prisma.opportunity.update({ where: { id: lopp.id }, data: { stage: "collect_requirements" } });
+
+  // Scheduling (Phase F) — a consultation on Teuta's opportunity
+  await prisma.appointment.create({
+    data: {
+      workspaceId: lumea.id,
+      opportunityId: lopp.id,
+      customerId: lc1.id,
+      type: "consultation",
+      status: "scheduled",
+      title: "Necklace design consultation",
+      scheduledAt: daysAhead(2),
+      durationMinutes: 30,
+      location: "Video call",
+      assignedToUserId: blerim.id,
+    },
+  });
+
+  // Document AI (Phase H) — a brief with an extraction (file written to the blob store)
+  const fs = await import("node:fs/promises");
+  const storageDir = process.env.OPERANTO_STORAGE_DIR || ".storage";
+  const docKey = `${lumea.id}/seed-necklace-brief.txt`;
+  await fs.mkdir(`${storageDir}/${lumea.id}`, { recursive: true });
+  await fs.writeFile(
+    `${storageDir}/${docKey}`,
+    "Custom gold name necklace — engrave 'TEUTA', 18k gold, deliver before the 10th.",
+  );
+  const doc = await prisma.document.create({
+    data: {
+      workspaceId: lumea.id,
+      opportunityId: lopp.id,
+      customerId: lc1.id,
+      kind: "other",
+      fileName: "necklace-brief.txt",
+      mimeType: "text/plain",
+      sizeBytes: 84,
+      storageKey: docKey,
+      status: "extracted",
+      createdByUserId: blerim.id,
+    },
+  });
+  await prisma.documentExtraction.create({
+    data: {
+      documentId: doc.id,
+      schemaKey: "custom_order",
+      data: { material: "Gold 18k", personalization_text: "TEUTA" } as Prisma.InputJsonValue,
+      confidence: 0.6,
+    },
+  });
+
+  // Integration Hub (Phase G) — a simulated CRM push for Teuta's opportunity
+  await prisma.integrationAction.create({
+    data: {
+      workspaceId: lumea.id,
+      provider: "webhook",
+      operation: "sync_opportunity",
+      entityType: "Opportunity",
+      entityId: lopp.id,
+      idempotencyKey: `opportunity:${lopp.id}`,
+      status: "success",
+      attempts: 1,
+      response: { simulated: true } as Prisma.InputJsonValue,
+      completedAt: hoursAgo(1),
+    },
+  });
 
   console.log("Seed complete.");
   console.log("  Bloom Studio  → lana@bloomstudio.test  (owner)");

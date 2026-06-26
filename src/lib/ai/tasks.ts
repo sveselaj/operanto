@@ -500,6 +500,55 @@ export const draftQuoteTask: AITaskDef<DraftQuoteInput, DraftQuoteOutput> = {
   },
 };
 
+// ── extractDocument (Document AI) ─────────────────────────────
+export type ExtractDocumentInput = {
+  kind: string; // photo | pdf | plan | form | other
+  fileName: string;
+  targetKeys?: { key: string; label: string }[]; // requirement keys to look for
+};
+const documentFieldSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  value: z.string(),
+});
+const extractDocumentSchema = z.object({
+  fields: z.array(documentFieldSchema).max(20),
+  confidence: z.number().min(0).max(1),
+});
+export type ExtractDocumentOutput = z.infer<typeof extractDocumentSchema>;
+
+export const extractDocumentTask: AITaskDef<ExtractDocumentInput, ExtractDocumentOutput> = {
+  name: "extractDocument",
+  version: "v1",
+  tier: "generation",
+  schema: extractDocumentSchema,
+  toolName: "record_document_extraction",
+  toolDescription: "Record structured fields extracted from a document (photo/PDF/plan/form).",
+  system: `You extract structured data from a customer-supplied document for a sales/operations workflow. Return the concrete fields you can read (measurements, counts, names, dates, reference numbers). Use stable snake_case keys; prefer the requested target keys when they apply. ${GUARDRAILS}`,
+  buildPrompt: (input) =>
+    `Document: ${input.fileName} (kind: ${input.kind})\n${
+      input.targetKeys?.length ? `Target fields: ${input.targetKeys.map((t) => `${t.key} (${t.label})`).join(", ")}\n` : ""
+    }\nExtract the structured fields.`,
+  mock: (input) => {
+    if (input.kind === "photo" || input.kind === "plan") {
+      return {
+        fields: [
+          { key: "dimensions", label: "Dimensions", value: "120 x 150 cm" },
+          { key: "item_count", label: "Quantity", value: "6" },
+        ],
+        confidence: 0.55,
+      };
+    }
+    if (input.kind === "form" || input.kind === "pdf") {
+      return {
+        fields: [{ key: "reference", label: "Reference", value: input.fileName.replace(/\.[^.]+$/, "") }],
+        confidence: 0.5,
+      };
+    }
+    return { fields: [], confidence: 0.4 };
+  },
+};
+
 export const AI_TASKS = {
   summarizeConversation: summarizeTask,
   classifyConversation: classifyTask,
@@ -510,4 +559,5 @@ export const AI_TASKS = {
   extractRequirements: extractRequirementsTask,
   requestInfo: requestInfoTask,
   draftQuote: draftQuoteTask,
+  extractDocument: extractDocumentTask,
 } as const;

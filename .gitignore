@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# local document blob store (Document AI dev storage)
+/.storage
+
 # debug
 npm-debug.log*
 yarn-debug.log*

@@ -11,6 +11,10 @@ import type {
   OpportunityStatus,
   QuoteStatus,
   ApprovalStatus,
+  AppointmentStatus,
+  AppointmentType,
+  IntegrationStatus,
+  DocumentStatus,
 } from "@prisma/client";
 
 type BadgeVariant = "default" | "primary" | "success" | "warning" | "danger" | "outline";
@@ -181,4 +185,45 @@ export const approvalStatusVariant: Record<ApprovalStatus, BadgeVariant> = {
 export const approvalActionLabel: Record<string, string> = {
   "quote.send": "Send quote",
   "price.override": "Price override",
+};
+
+export const appointmentTypeLabel: Record<AppointmentType, string> = {
+  survey: "Survey",
+  consultation: "Consultation",
+  installation: "Installation",
+  support: "Support",
+  delivery: "Delivery",
+};
+
+export const appointmentStatusLabel: Record<AppointmentStatus, string> = {
+  proposed: "Proposed",
+  scheduled: "Scheduled",
+  confirmed: "Confirmed",
+  completed: "Completed",
+  cancelled: "Cancelled",
+  no_show: "No-show",
+};
+
+export const appointmentStatusVariant: Record<AppointmentStatus, BadgeVariant> = {
+  proposed: "outline",
+  scheduled: "primary",
+  confirmed: "success",
+  completed: "default",
+  cancelled: "danger",
+  no_show: "warning",
+};
+
+export const integrationStatusVariant: Record<IntegrationStatus, BadgeVariant> = {
+  pending: "outline",
+  running: "warning",
+  success: "success",
+  failed: "danger",
+  retrying: "warning",
+};
+
+export const documentStatusVariant: Record<DocumentStatus, BadgeVariant> = {
+  uploaded: "outline",
+  processing: "warning",
+  extracted: "success",
+  failed: "danger",
 };

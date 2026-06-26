@@ -20,6 +20,8 @@ export type Permission =
   | "quotes:manage" // Quoting: create/edit quotes
   | "approvals:decide" // Approvals: approve/reject gated actions
   | "workflow:manage" // Workflow engine: start/advance instances
+  | "appointments:manage" // Scheduling: book/manage appointments
+  | "integrations:manage" // Integration Hub: CRM/ERP pushes
   | "tasks:manage"
   | "sops:create"
   | "sops:approve"
@@ -43,6 +45,8 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "quotes:manage",
     "approvals:decide",
     "workflow:manage",
+    "appointments:manage",
+    "integrations:manage",
     "tasks:manage",
     "sops:create",
     "sops:approve",
@@ -65,6 +69,8 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "quotes:manage",
     "approvals:decide",
     "workflow:manage",
+    "appointments:manage",
+    "integrations:manage",
     "tasks:manage",
     "sops:create",
     "sops:approve",
@@ -85,6 +91,8 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "quotes:manage",
     "approvals:decide",
     "workflow:manage",
+    "appointments:manage",
+    "integrations:manage",
     "tasks:manage",
     "sops:create",
     "content:manage",
@@ -100,6 +108,7 @@ const MATRIX: Record<WorkspaceRole, Permission[]> = {
     "opportunities:manage",
     "quotes:manage",
     "workflow:manage",
+    "appointments:manage",
     "tasks:manage",
     "content:manage",
     "reports:view",

@@ -9,6 +9,7 @@ import * as templates from "@/lib/mediasync/templates";
 import { runDiagnostic, type DiagnosticResult } from "@/lib/mediasync/diagnostics";
 import { setChannelCredentials } from "@/lib/mediasync/channel-credentials";
 import * as catalogue from "@/lib/services/catalogue";
+import { retryIntegration } from "@/lib/services/integrations";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -113,6 +114,15 @@ export async function deleteProductAction(slug: string, id: string): Promise<Act
     const ctx = await ctxOrThrow(slug);
     await catalogue.deleteProduct(ctx, id);
   }, slug, "catalogue");
+}
+
+// ── Integrations ──────────────────────────────────────────────
+
+export async function retryIntegrationAction(slug: string, id: string): Promise<ActionResult> {
+  return toResult(async () => {
+    const ctx = await ctxOrThrow(slug);
+    await retryIntegration(ctx, id);
+  }, slug, "integrations");
 }
 
 // ── Catalogue: business rules ─────────────────────────────────
