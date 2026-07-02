@@ -1,25 +1,45 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Sparkles, ArrowUp } from "lucide-react";
+import { createThreadAction, sendMessageAction } from "@/app/[workspace]/assistant/actions";
 
 const SUGGESTIONS = [
-  "Show unanswered Instagram leads today",
-  "Draft replies for pricing questions",
-  "Summarize this conversation",
-  "Create an SOP for refund requests",
+  "Find leads not contacted in 7 days",
+  "Summarize today's new inquiries",
+  "Draft a reply for the latest pricing question",
 ];
 
-export function CommandBar() {
+/**
+ * Persistent bottom command bar. Routes a natural-language command into a new
+ * assistant thread (plan → tools → grounded reply). Rendered as an inert prompt
+ * for roles without `assistant:use`.
+ */
+export function CommandBar({ slug, canUse }: { slug: string; canUse: boolean }) {
+  const router = useRouter();
   const [value, setValue] = useState("");
-  const [note, setNote] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!value.trim()) return;
-    // AI command routing lands in Phase 3 (AI service layer).
-    setNote(`Command captured: “${value.trim()}”. AI routing arrives in Phase 3.`);
-    setValue("");
+    const text = value.trim();
+    if (!text || pending) return;
+    if (!canUse) {
+      setError("Your role can't use the assistant.");
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const created = await createThreadAction(slug);
+      if (!created.ok) return setError(created.error);
+      const sent = await sendMessageAction(slug, created.id, text);
+      if (!sent.ok) return setError(sent.error);
+      setValue("");
+      router.push(`/${slug}/assistant/${created.id}`);
+      router.refresh();
+    });
   }
 
   return (
@@ -46,20 +66,22 @@ export function CommandBar() {
             value={value}
             onChange={(e) => {
               setValue(e.target.value);
-              if (note) setNote(null);
+              if (error) setError(null);
             }}
             placeholder="Ask Operanto to do something…"
             className="flex-1 bg-transparent text-sm placeholder:text-muted-foreground focus:outline-none"
+            disabled={pending}
           />
           <button
             type="submit"
-            disabled={!value.trim()}
+            disabled={!value.trim() || pending}
             className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
           >
             <ArrowUp className="size-4" />
           </button>
         </form>
-        {note && <p className="mt-2 text-xs text-muted-foreground">{note}</p>}
+        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+        {pending && <p className="mt-2 text-xs text-muted-foreground">Starting a chat…</p>}
       </div>
     </div>
   );

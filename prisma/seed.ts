@@ -19,6 +19,14 @@ async function main() {
   console.log("Seeding Operanto…");
 
   // ── Clean (child → parent) ────────────────────────────────
+  await prisma.approvalRequest.deleteMany();
+  await prisma.toolInvocation.deleteMany();
+  await prisma.assistantMessage.deleteMany();
+  await prisma.assistantThread.deleteMany();
+  await prisma.messageDraft.deleteMany();
+  await prisma.conversationContextLink.deleteMany();
+  await prisma.opportunity.deleteMany();
+  await prisma.property.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.automation.deleteMany();
   await prisma.qAReview.deleteMany();
@@ -50,6 +58,11 @@ async function main() {
   const rina = await mkUser("rina@bloomstudio.test", "Rina Hoxha"); // reviewer
   const elira = await mkUser("elira@lumeagoods.test", "Elira Gashi"); // owner (ecommerce)
   const blerim = await mkUser("blerim@lumeagoods.test", "Blerim Demiri"); // agent (both)
+  // Pronatona (real-estate) team
+  const ardit = await mkUser("ardit@pronatona.test", "Ardit Berisha"); // owner
+  const flaka = await mkUser("flaka@pronatona.test", "Flaka Morina"); // manager
+  const endrit = await mkUser("endrit@pronatona.test", "Endrit Krasniqi"); // agent
+  const rea = await mkUser("rea@pronatona.test", "Rea Hoxha"); // reviewer
 
   // ════════════════════════════════════════════════════════════
   // Workspace 1 — Bloom Studio (beauty/aesthetics)
@@ -569,11 +582,416 @@ async function main() {
     },
   });
 
+  // ════════════════════════════════════════════════════════════
+  // Workspace 3 — Pronatona (real estate, Kosovo) — VERTICAL DEMO
+  // ════════════════════════════════════════════════════════════
+  const pronatona = await prisma.workspace.create({
+    data: {
+      name: "Pronatona",
+      slug: "pronatona",
+      plan: "pro",
+      timezone: "Europe/Belgrade",
+      defaultLanguage: "sq",
+      vertical: "real-estate",
+      members: {
+        create: [
+          { userId: ardit.id, role: "owner" },
+          { userId: flaka.id, role: "manager" },
+          { userId: endrit.id, role: "agent" },
+          { userId: rea.id, role: "reviewer" },
+        ],
+      },
+    },
+  });
+
+  const proIg = await prisma.channelAccount.create({
+    data: { workspaceId: pronatona.id, type: "instagram", name: "@pronatona", status: "connected" },
+  });
+  const proWa = await prisma.channelAccount.create({
+    data: { workspaceId: pronatona.id, type: "whatsapp", name: "Pronatona WhatsApp", status: "connected" },
+  });
+  await prisma.channelAccount.create({
+    data: { workspaceId: pronatona.id, type: "webchat", name: "Pronatona.com chat", status: "connected" },
+  });
+
+  await prisma.brandVoice.create({
+    data: {
+      workspaceId: pronatona.id,
+      name: "Pronatona — professional & warm (Albanian)",
+      description: "Trustworthy, clear real-estate tone for Kosovo buyers and sellers.",
+      tone: "professional, warm, precise",
+      language: "sq",
+      dos: ["Confirm facts from the listing", "Offer a viewing", "Be transparent about status"],
+      donts: ["Invent availability or price", "Pressure the buyer", "Promise legal outcomes"],
+      examplePhrases: ["Faleminderit që na kontaktuat!", "A dëshironi të organizojmë një vizitë?"],
+    },
+  });
+
+  // ── Properties (source of truth for availability/price/status) ──
+  const mkProp = (data: Prisma.PropertyCreateManyInput) => data;
+  await prisma.property.createMany({
+    data: [
+      mkProp({
+        workspaceId: pronatona.id,
+        code: "PR-1042",
+        title: "Bright 3-bedroom apartment in Arbëri",
+        type: "apartment",
+        listingType: "sale",
+        status: "available",
+        price: 168000,
+        areaSqm: 112,
+        bedrooms: 3,
+        bathrooms: 2,
+        city: "Prishtina",
+        district: "Arbëri",
+        description: "Modern apartment with balcony, parking, near schools.",
+        media: ["https://images.example/pr-1042-1.jpg", "https://images.example/pr-1042-2.jpg"],
+        features: ["balcony", "parking", "elevator"],
+        assignedAgentUserId: endrit.id,
+        publicationStatus: "listed",
+        availabilityNote: "Available for viewings this week.",
+      }),
+      mkProp({
+        workspaceId: pronatona.id,
+        code: "PR-1050",
+        title: "2-bedroom apartment near Prishtina center",
+        type: "apartment",
+        listingType: "sale",
+        status: "available",
+        price: 132000,
+        areaSqm: 84,
+        bedrooms: 2,
+        bathrooms: 1,
+        city: "Prishtina",
+        district: "Qendër",
+        features: ["balcony"],
+        assignedAgentUserId: endrit.id,
+        publicationStatus: "listed",
+      }),
+      mkProp({
+        workspaceId: pronatona.id,
+        code: "PR-1102",
+        title: "Cozy 3-bedroom apartment in Bregu i Diellit",
+        type: "apartment",
+        listingType: "sale",
+        status: "available",
+        price: 149000,
+        areaSqm: 96,
+        bedrooms: 3,
+        bathrooms: 2,
+        city: "Prishtina",
+        district: "Bregu i Diellit",
+        features: ["parking"],
+        assignedAgentUserId: flaka.id,
+        publicationStatus: "listed",
+      }),
+      mkProp({
+        workspaceId: pronatona.id,
+        code: "PR-1033",
+        title: "Renovated apartment in Dardania",
+        type: "apartment",
+        listingType: "sale",
+        status: "reserved",
+        price: 158000,
+        areaSqm: 105,
+        bedrooms: 3,
+        bathrooms: 2,
+        city: "Prishtina",
+        district: "Dardania",
+        assignedAgentUserId: endrit.id,
+        availabilityNote: "Reserved — deposit received, pending contract.",
+        publicationStatus: "listed",
+      }),
+      mkProp({
+        workspaceId: pronatona.id,
+        code: "PR-1007",
+        title: "Family apartment in Ulpiana",
+        type: "apartment",
+        listingType: "sale",
+        status: "sold",
+        price: 145000,
+        areaSqm: 100,
+        bedrooms: 3,
+        city: "Prishtina",
+        district: "Ulpiana",
+        availabilityNote: "Sold in June.",
+        publicationStatus: "unlisted",
+      }),
+      mkProp({
+        workspaceId: pronatona.id,
+        code: "PR-2001",
+        title: "Modern villa with garden in Germia",
+        type: "villa",
+        listingType: "sale",
+        status: "available",
+        price: 415000,
+        areaSqm: 260,
+        bedrooms: 5,
+        bathrooms: 3,
+        city: "Prishtina",
+        district: "Germia",
+        features: ["garden", "garage"],
+        assignedAgentUserId: flaka.id,
+        publicationStatus: "listed",
+      }),
+    ],
+  });
+  const pr1042 = await prisma.property.findFirstOrThrow({
+    where: { workspaceId: pronatona.id, code: "PR-1042" },
+  });
+
+  // ── Customers / leads ──
+  const buyerDe = await prisma.customer.create({
+    data: {
+      workspaceId: pronatona.id,
+      name: "Arben Krasniqi",
+      email: "arben.k@example.de",
+      language: "sq",
+      location: "Germany",
+      socialHandles: { instagram: "@arben.k", externalId: "ig_arben" } as Prisma.InputJsonValue,
+      notes: "Kosovar diaspora buyer based in Germany.",
+    },
+  });
+  const buyerLocal = await prisma.customer.create({
+    data: {
+      workspaceId: pronatona.id,
+      name: "Vlora Gashi",
+      phone: "+38344111222",
+      language: "sq",
+      location: "Prishtina",
+    },
+  });
+
+  // ── Conversations ──
+  const proConv1 = await prisma.conversation.create({
+    data: {
+      workspaceId: pronatona.id,
+      customerId: buyerDe.id,
+      channelAccountId: proIg.id,
+      channelType: "instagram",
+      status: "open",
+      priority: "high",
+      assignedToUserId: endrit.id,
+      intent: "product_inquiry",
+      sentiment: "positive",
+      leadScore: 82,
+      subject: "Availability — Arbëri apartment",
+      summary: "Diaspora buyer from Germany asking if the Arbëri apartment (PR-1042) is still available.",
+      lastMessageAt: hoursAgo(2),
+      lastInboundAt: hoursAgo(2),
+      messages: {
+        create: [
+          {
+            workspaceId: pronatona.id,
+            direction: "inbound",
+            senderType: "customer",
+            body: "Përshëndetje, a është ende e lirë banesa në Arbëri? Buxheti im është deri në €170,000.",
+            createdAt: hoursAgo(2),
+          },
+        ],
+      },
+    },
+  });
+
+  await prisma.conversation.create({
+    data: {
+      workspaceId: pronatona.id,
+      customerId: buyerLocal.id,
+      channelAccountId: proWa.id,
+      channelType: "whatsapp",
+      status: "open",
+      priority: "normal",
+      assignedToUserId: endrit.id,
+      intent: "appointment_request",
+      sentiment: "neutral",
+      leadScore: 68,
+      subject: "Viewing request",
+      summary: "Local buyer wants to view a 2-bedroom apartment near the center.",
+      lastMessageAt: hoursAgo(8),
+      lastInboundAt: hoursAgo(8),
+      messages: {
+        create: [
+          {
+            workspaceId: pronatona.id,
+            direction: "inbound",
+            senderType: "customer",
+            body: "A mund të organizojmë një vizitë për një banesë me 2 dhoma?",
+            createdAt: hoursAgo(8),
+          },
+        ],
+      },
+    },
+  });
+
+  // ── Opportunities (CRM) with extracted requirements ──
+  const oppDe = await prisma.opportunity.create({
+    data: {
+      workspaceId: pronatona.id,
+      title: "Arben Krasniqi — 3-bed apartment, Prishtina",
+      stage: "qualified",
+      value: 168000,
+      currency: "EUR",
+      leadScore: 82,
+      contactCustomerId: buyerDe.id,
+      ownerUserId: endrit.id,
+      conversationId: proConv1.id,
+      source: "instagram",
+      nextAction: "Confirm availability and offer a viewing for PR-1042.",
+      lastActivityAt: hoursAgo(2),
+      createdByUserId: endrit.id,
+      requirements: {
+        budgetMin: 120000,
+        budgetMax: 170000,
+        locations: ["Prishtina", "Arbëri"],
+        propertyType: "apartment",
+        bedrooms: 3,
+        timeline: "Within 3 months",
+      } as Prisma.InputJsonValue,
+    },
+  });
+  await prisma.opportunity.create({
+    data: {
+      workspaceId: pronatona.id,
+      title: "Vlora Gashi — 2-bed near center",
+      stage: "new",
+      value: 132000,
+      currency: "EUR",
+      leadScore: 68,
+      contactCustomerId: buyerLocal.id,
+      ownerUserId: endrit.id,
+      source: "whatsapp",
+      nextAction: "Schedule a viewing.",
+      lastActivityAt: hoursAgo(8),
+      createdByUserId: endrit.id,
+      requirements: {
+        budgetMax: 140000,
+        locations: ["Prishtina"],
+        propertyType: "apartment",
+        bedrooms: 2,
+        timeline: "Within 6 weeks",
+      } as Prisma.InputJsonValue,
+    },
+  });
+
+  // Link the conversation to the property + opportunity (context panel).
+  await prisma.conversationContextLink.createMany({
+    data: [
+      {
+        workspaceId: pronatona.id,
+        conversationId: proConv1.id,
+        recordType: "property",
+        recordId: pr1042.id,
+        label: pr1042.code,
+      },
+      {
+        workspaceId: pronatona.id,
+        conversationId: proConv1.id,
+        recordType: "opportunity",
+        recordId: oppDe.id,
+        label: oppDe.title,
+      },
+    ],
+  });
+
+  await prisma.task.create({
+    data: {
+      workspaceId: pronatona.id,
+      title: "Send viewing options for PR-1042 to Arben",
+      status: "todo",
+      priority: "high",
+      assignedToUserId: endrit.id,
+      createdByUserId: flaka.id,
+      dueAt: daysAhead(1),
+      linkedConversationId: proConv1.id,
+      linkedCustomerId: buyerDe.id,
+    },
+  });
+
+  // ── A prepared social post + a PENDING approval to publish it ──
+  const proDraft = await prisma.contentDraft.create({
+    data: {
+      workspaceId: pronatona.id,
+      title: "PR-1042 — Arbëri apartment (Instagram)",
+      channel: "instagram",
+      status: "review",
+      content:
+        "✨ E RE në Arbëri! Banesë moderne me 3 dhoma, 112 m², €168,000.\n\nBallkon, parking, afër shkollave. A dëshironi një vizitë? Na shkruani në DM! 🏡",
+      createdByUserId: endrit.id,
+    },
+  });
+  const socialInvocation = await prisma.toolInvocation.create({
+    data: {
+      workspaceId: pronatona.id,
+      toolName: "queue_social_post",
+      title: "Publish / queue social post",
+      category: "social",
+      risk: "write",
+      status: "awaiting_approval",
+      approvalRequired: true,
+      correlationId: "seed-social-1",
+      input: { contentDraftId: proDraft.id, scheduledInHours: 24 } as Prisma.InputJsonValue,
+    },
+  });
+  await prisma.approvalRequest.create({
+    data: {
+      workspaceId: pronatona.id,
+      toolInvocationId: socialInvocation.id,
+      status: "pending",
+      title: "Publish / queue social post",
+      summary: "Publish / queue social post — Instagram post for PR-1042, in 24h",
+      requestedByUserId: endrit.id,
+      expiresAt: daysAhead(2),
+    },
+  });
+
+  // ── A prepared customer reply + a PENDING send approval ──
+  const replyDraft = await prisma.messageDraft.create({
+    data: {
+      workspaceId: pronatona.id,
+      conversationId: proConv1.id,
+      channel: "instagram",
+      body:
+        "Përshëndetje Arben! Po, banesa PR-1042 në Arbëri aktualisht figuron si e disponueshme (€168,000, 112 m², 3 dhoma). A dëshironi t'ju dërgoj fotografi ose të organizojmë një vizitë këtë javë?",
+      status: "draft",
+      createdByUserId: endrit.id,
+    },
+  });
+  const sendInvocation = await prisma.toolInvocation.create({
+    data: {
+      workspaceId: pronatona.id,
+      toolName: "send_customer_message",
+      title: "Send customer message",
+      category: "messaging",
+      risk: "write",
+      status: "awaiting_approval",
+      approvalRequired: true,
+      correlationId: "seed-send-1",
+      input: {
+        conversationId: proConv1.id,
+        draftId: replyDraft.id,
+        body: replyDraft.body,
+      } as Prisma.InputJsonValue,
+    },
+  });
+  await prisma.approvalRequest.create({
+    data: {
+      workspaceId: pronatona.id,
+      toolInvocationId: sendInvocation.id,
+      status: "pending",
+      title: "Send customer message",
+      summary: "Send an Instagram reply to Arben confirming PR-1042 availability",
+      requestedByUserId: endrit.id,
+      expiresAt: daysAhead(2),
+    },
+  });
+
   console.log("Seed complete.");
-  console.log("  Bloom Studio  → lana@bloomstudio.test  (owner)");
+  console.log("  Bloom Studio  → lana@bloomstudio.test   (owner)");
   console.log("  Bloom Studio  → driton@bloomstudio.test (agent)");
-  console.log("  Lumea Goods   → elira@lumeagoods.test   (owner)");
-  console.log("  blerim@lumeagoods.test belongs to Lumea; password for all: 'operanto'");
+  console.log("  Lumea Goods   → elira@lumeagoods.test    (owner)");
+  console.log("  Pronatona     → ardit@pronatona.test     (owner, real-estate vertical)");
+  console.log("  Pronatona     → endrit@pronatona.test    (agent)");
+  console.log("  Password for all: 'operanto'");
 }
 
 main()

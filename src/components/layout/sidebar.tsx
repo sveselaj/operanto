@@ -4,7 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Sparkles,
+  Bot,
   Inbox,
+  Target,
+  Building2,
+  ShieldCheck,
+  ScrollText,
   CheckSquare,
   BookOpen,
   PenLine,
@@ -35,13 +40,18 @@ export function Sidebar({
   const base = `/${workspaceSlug}`;
 
   const items: NavItem[] = [
+    { key: "assistant", label: "Assistant", href: `${base}/assistant`, icon: Bot },
     { key: "command", label: "Command", href: `${base}/command`, icon: Sparkles },
     { key: "inbox", label: "Inbox", href: `${base}/inbox`, icon: Inbox },
+    { key: "opportunities", label: "Opportunities", href: `${base}/opportunities`, icon: Target },
+    { key: "properties", label: "Properties", href: `${base}/properties`, icon: Building2 },
     { key: "tasks", label: "Tasks", href: `${base}/tasks`, icon: CheckSquare },
+    { key: "approvals", label: "Approvals", href: `${base}/approvals`, icon: ShieldCheck },
     { key: "sops", label: "SOPs", href: `${base}/sops`, icon: BookOpen },
     { key: "studio", label: "Studio", href: `${base}/studio`, icon: PenLine },
     { key: "intelligence", label: "Intelligence", href: `${base}/intelligence`, icon: BarChart3 },
     { key: "automations", label: "Automations", href: `${base}/automations`, icon: Workflow },
+    { key: "audit", label: "Audit log", href: `${base}/audit`, icon: ScrollText },
     { key: "team", label: "Team", href: `${base}/team`, icon: Users },
     { key: "settings", label: "Settings", href: `${base}/settings`, icon: Settings },
   ];

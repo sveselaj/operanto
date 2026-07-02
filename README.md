@@ -28,16 +28,34 @@ pnpm dev                      # http://localhost:3000
 > Note: the Docker Postgres is mapped to host port **5433** to avoid clashing with a
 > local Postgres on 5432. Change in `docker-compose.yml` + `.env` if needed.
 
+> **Node ≥ 20.12** is required to run the test suite (Vitest 4). The app itself
+> runs on 20.6+. The assistant works with **no API key** (deterministic mock mode).
+
 ### Demo accounts (password `operanto`)
 
-| Email | Workspace | Role |
-|---|---|---|
-| `lana@bloomstudio.test` | Bloom Studio (beauty/aesthetics) | owner |
-| `marko@bloomstudio.test` | Bloom Studio | manager |
-| `driton@bloomstudio.test` | Bloom Studio | agent |
-| `rina@bloomstudio.test` | Bloom Studio | reviewer |
-| `elira@lumeagoods.test` | Lumea Goods (boutique ecommerce) | owner |
-| `blerim@lumeagoods.test` | Lumea Goods | agent |
+| Email | Workspace | Vertical | Role |
+|---|---|---|---|
+| `ardit@pronatona.test` | Pronatona (real estate, Kosovo) | real-estate | owner |
+| `endrit@pronatona.test` | Pronatona | real-estate | agent |
+| `rea@pronatona.test` | Pronatona | real-estate | reviewer |
+| `lana@bloomstudio.test` | Bloom Studio (beauty/aesthetics) | generic | owner |
+| `driton@bloomstudio.test` | Bloom Studio | generic | agent |
+| `elira@lumeagoods.test` | Lumea Goods (boutique ecommerce) | generic | owner |
+
+Sign in as **`ardit@pronatona.test`** for the full chat cockpit.
+
+### Chat cockpit
+
+A chat-first operational layer: an internal AI **Assistant** that turns
+natural-language commands into typed, permission-controlled **tools**, renders
+results as rich **cards**, and routes sensitive actions through an **approval**
+queue — over structured records (contacts, conversations, opportunities,
+properties) and real workflows. Real-estate lives in an isolated vertical
+(`src/verticals/real-estate`); the core is vertical-agnostic.
+
+See `docs/chat-cockpit-architecture.md`, `docs/ai-tool-execution.md`,
+`docs/approval-workflows.md`, `docs/pronatona-real-estate-vertical.md`, and
+`docs/chat-cockpit-demo.md`.
 
 ## Scripts
 

@@ -13,6 +13,8 @@ export async function audit(
     entityId?: string;
     before?: unknown;
     after?: unknown;
+    /** Ties related events (e.g. one assistant turn / approval) together. */
+    correlationId?: string;
   },
 ) {
   await prisma.auditLog.create({
@@ -24,6 +26,7 @@ export async function audit(
       entityId: params.entityId,
       before: (params.before ?? undefined) as object | undefined,
       after: (params.after ?? undefined) as object | undefined,
+      correlationId: params.correlationId,
     },
   });
 }

@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { requireWorkspace, listMyWorkspaces } from "@/lib/workspace";
-import { visibleModules } from "@/lib/rbac";
+import { can, visibleModules } from "@/lib/rbac";
+import { getVertical } from "@/lib/verticals/registry";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { CommandBar } from "@/components/layout/command-bar";
@@ -25,7 +26,12 @@ export default async function WorkspaceLayout({
   const ctx = await requireWorkspace(slug);
   const [session, memberships] = await Promise.all([auth(), listMyWorkspaces()]);
 
-  const visible = visibleModules(ctx.member.role);
+  const visible = {
+    ...visibleModules(ctx.member.role),
+    // Properties is a real-estate-vertical screen, gated by role AND vertical.
+    properties:
+      can(ctx.member.role, "properties:read") && !!getVertical(ctx.workspace.vertical),
+  };
 
   return (
     <div className="flex h-screen w-full overflow-hidden">
@@ -49,7 +55,7 @@ export default async function WorkspaceLayout({
           roleLabel={ROLE_LABELS[ctx.member.role] ?? ctx.member.role}
         />
         <main className="flex-1 overflow-y-auto">{children}</main>
-        <CommandBar />
+        <CommandBar slug={ctx.workspace.slug} canUse={can(ctx.member.role, "assistant:use")} />
       </div>
     </div>
   );
