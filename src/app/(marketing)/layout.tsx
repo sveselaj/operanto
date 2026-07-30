@@ -38,11 +38,14 @@ export default function MarketingLayout({
               </Link>
             ))}
           </nav>
+          {/* The cockpit is not generally available yet: this leads to the
+              staging environment, which is labelled so nobody mistakes it for
+              a production product surface. */}
           <Link
             href="/login"
             className="text-sm font-medium text-primary transition-colors hover:text-accent-foreground"
           >
-            Sign in
+            Sign in <span className="text-muted-foreground">(staging)</span>
           </Link>
         </div>
       </header>

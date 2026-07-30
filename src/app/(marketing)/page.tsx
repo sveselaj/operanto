@@ -77,6 +77,10 @@ export default function HomePage() {
             >
               Contact
             </Link>
+            <p className="w-full text-sm text-muted-foreground">
+              Sign-in leads to the Operanto staging environment. Access is by
+              invitation while the first implementation is in progress.
+            </p>
           </div>
         </div>
       </section>
