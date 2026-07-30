@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Providers } from "@/components/providers";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,8 +13,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Operanto",
-  description: "Where conversations become operations.",
+  title: {
+    default: "Operanto — Customer operations that remember, continue, and resolve",
+    template: "%s · Operanto",
+  },
+  description:
+    "Operanto connects customers, conversations, opportunities, tasks, staff, and source systems into one operational cockpit.",
 };
 
 export default function RootLayout({
@@ -28,9 +31,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        <Providers>{children}</Providers>
-      </body>
+      <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
 }
