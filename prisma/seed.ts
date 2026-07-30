@@ -124,7 +124,7 @@ async function main() {
     console.log(`Integration created: ${integration.id}`);
   }
 
-  if (process.env.SEED_SECOND_ORG === "1") {
+  if (process.env.SEED_SECOND_ORG === "1" || process.env.SEED_TEST_USERS === "1") {
     await upsertOrgWithAdmin({
       name: "Isolation Test Org",
       slug: "isolation-test",
@@ -133,6 +133,39 @@ async function main() {
       adminPassword: "isolation-test-Admin1-long",
     });
     console.log("Second organisation seeded (isolation-test).");
+  }
+
+  // Acceptance-test fixtures (Playwright). Never enable in production:
+  // fixed credentials, meant for local/staging verification runs only.
+  if (process.env.SEED_TEST_USERS === "1") {
+    const operatorHash = await bcrypt.hash("operator-test-Passw0rd1", 12);
+    const operator = await prisma.user.upsert({
+      where: { email: "operator@operanto.local" },
+      create: {
+        email: "operator@operanto.local",
+        name: "Test Operator",
+        passwordHash: operatorHash,
+        status: "ACTIVE",
+        passwordUpdatedAt: new Date(),
+      },
+      update: {},
+    });
+    await prisma.membership.upsert({
+      where: {
+        organisationId_userId: {
+          organisationId: organisation.id,
+          userId: operator.id,
+        },
+      },
+      create: {
+        organisationId: organisation.id,
+        userId: operator.id,
+        role: "OPERATOR",
+        status: "ACTIVE",
+      },
+      update: { role: "OPERATOR", status: "ACTIVE" },
+    });
+    console.log("Test operator seeded (operator@operanto.local).");
   }
 
   console.log(`Seed complete. Organisation: ${organisation.slug} (${organisation.id})`);

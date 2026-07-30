@@ -26,7 +26,62 @@ environment** — always.
 | `api-staging` | CNAME | `cname.vercel-dns.com` (staging project) |
 | future: `docs`, `status` | CNAME | reserved |
 
+## Host routing (one Next.js project, several hosts)
+
+`src/proxy.ts` selects a SURFACE from an explicit allowlist built from the
+three `NEXT_PUBLIC_*_URL` values — it never derives identity or permissions
+from the Host header (every page/action/route re-authenticates itself):
+
+- **API host** (`api.operanto.ai` / `api-staging.operanto.ai`): `/api/*` only;
+  anything else is 404 — it never renders marketing or cockpit HTML.
+- **App host**: cockpit; on a dedicated app host `/` redirects to
+  `/dashboard`. **Staging runs combined-host mode** (`SITE_URL == APP_URL`):
+  marketing and cockpit share `staging.operanto.ai` while the API host stays
+  isolated.
+- **Marketing host**: cockpit paths redirect to the app host.
+- **Unknown hosts** (extra domains pointed at the deployment, `*.vercel.app`
+  preview URLs): least-privileged surface — marketing pages and `/api/health*`
+  only; cockpit paths redirect to the canonical app host; other `/api/*` 404s.
+
+Covered by unit tests in `src/proxy.test.ts` (including forged
+`X-Forwarded-Host` with an unknown `Host`).
+
+Known limitations of serving multiple hosts from one Vercel project:
+
+- `NEXT_PUBLIC_*` values are **inlined at build time** — each environment
+  needs its own build with its own values (Vercel does this per project /
+  environment; a preview build carries preview values).
+- Vercel normalizes `Host`/`X-Forwarded-Host` to the routed domain; the
+  allowlist is defense-in-depth for non-Vercel/origin access.
+- Cookies are host-scoped (no `Domain` attribute): sessions on
+  `app.operanto.ai` do not leak to the marketing host; in combined-host
+  staging there is only one host anyway. Auth.js callback URLs come from
+  `AUTH_URL` — set it to the cockpit host per environment.
+- Canonical URLs use `metadataBase` = `NEXT_PUBLIC_SITE_URL`, so marketing
+  pages canonicalize to the marketing domain even when served on staging.
+
 ## Environment variables
+
+Rate limiting uses the **Upstash REST convention only**
+(`UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`); a bare `REDIS_URL`
+is intentionally NOT supported — one convention, no conflicting config.
+
+Staging checklist:
+
+```
+NEXT_PUBLIC_SITE_URL=https://staging.operanto.ai
+NEXT_PUBLIC_APP_URL=https://staging.operanto.ai     # combined-host mode
+NEXT_PUBLIC_API_URL=https://api-staging.operanto.ai
+AUTH_URL=https://staging.operanto.ai
+DATABASE_URL= / DIRECT_URL=                          # Neon staging branch
+AUTH_SECRET= / OPERANTO_ENCRYPTION_KEY= / CRON_SECRET=   # fresh, staging-only
+PRONATONA_WEBHOOK_SECRET=                            # staging-only shared secret
+PRONATONA_SOURCE_ORGANISATION_ID=                    # from the CONNECTED Pronatona DB
+UPSTASH_REDIS_REST_URL= / UPSTASH_REDIS_REST_TOKEN=  # staging instance
+RESEND_API_KEY= / EMAIL_FROM=                        # optional (dev-log fallback)
+SENTRY_DSN= / NEXT_PUBLIC_SENTRY_DSN=                # optional
+SEED_ADMIN_EMAIL= / SEED_ADMIN_NAME= / SEED_ADMIN_PASSWORD=  # for the seed run only
+```
 
 See `.env.example` for the complete annotated list. Production values:
 

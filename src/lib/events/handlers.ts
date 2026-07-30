@@ -26,6 +26,18 @@ export type HandlerResult = {
 
 const FOLLOW_UP_SLA_HOURS = Number(process.env.OPERANTO_FOLLOWUP_SLA_HOURS ?? 4);
 
+/**
+ * Projection transactions run many sequential statements; against a remote
+ * pooled database (Neon) each round-trip costs ~50–150 ms, so Prisma's 5 s
+ * default interactive-transaction timeout is too tight. Failures here are
+ * retried by the sweep, so a generous ceiling is safe.
+ */
+function projectionTx<T>(
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return prisma.$transaction(fn, { timeout: 30_000, maxWait: 10_000 });
+}
+
 /** Pronatona lead status → Operanto opportunity stage. */
 export function stageFromSourceStatus(status: string): OpportunityStage | null {
   const map: Record<string, OpportunityStage> = {
@@ -207,7 +219,7 @@ async function handleLeadCreated(
   const schema = variant === "lead.created" ? leadCreatedSchema : viewingRequestedSchema;
   const data = schema.parse(envelopeData(event));
 
-  await prisma.$transaction(async (tx) => {
+  await projectionTx(async (tx) => {
     const match = await findOrCreateCustomer(
       tx,
       event.organisationId,
@@ -408,7 +420,7 @@ async function handleLeadCreated(
 async function handleLeadAssigned(event: InboundEvent): Promise<HandlerResult> {
   const data = leadAssignedSchema.parse(envelopeData(event));
 
-  await prisma.$transaction(async (tx) => {
+  await projectionTx(async (tx) => {
     const opportunity = await findOpportunityBySourceLead(tx, event, data.leadId);
     if (!opportunity) {
       throw new Error(
@@ -451,7 +463,7 @@ async function handleLeadAssigned(event: InboundEvent): Promise<HandlerResult> {
 async function handleLeadStatusChanged(event: InboundEvent): Promise<HandlerResult> {
   const data = leadStatusChangedSchema.parse(envelopeData(event));
 
-  await prisma.$transaction(async (tx) => {
+  await projectionTx(async (tx) => {
     const opportunity = await findOpportunityBySourceLead(tx, event, data.leadId);
     if (!opportunity) {
       throw new Error(
@@ -494,7 +506,7 @@ async function handleLeadStatusChanged(event: InboundEvent): Promise<HandlerResu
 async function handlePropertyEvent(event: InboundEvent): Promise<HandlerResult> {
   const data = propertyEventSchema.parse(envelopeData(event));
 
-  await prisma.$transaction(async (tx) => {
+  await projectionTx(async (tx) => {
     const contextId = await upsertPropertyContext(tx, event, data);
     await upsertMapping(tx, event, "property", data.id, "property_context", contextId);
 
@@ -530,7 +542,7 @@ async function handleStaffEvent(event: InboundEvent): Promise<HandlerResult> {
   // a source-system staff event must not suspend or create Operanto access
   // automatically. We record it so administrators can act (and the
   // integration health screen surfaces it). Historical activity is kept.
-  await prisma.$transaction(async (tx) => {
+  await projectionTx(async (tx) => {
     const membershipId = await resolveStaffMembershipId(tx, event, data.userId);
     await addActivityOnce(tx, event, {
       activityType: event.eventType, // staff.activated | staff.suspended

@@ -108,7 +108,12 @@ export async function POST(req: Request) {
         rawPayload: envelope.data as unknown as Prisma.InputJsonObject,
       },
     });
-    after(() => processInboundEvent(stored.id));
+    after(() =>
+      processInboundEvent(stored.id).catch((error) => {
+        // The retry sweep will pick the event up; this log is for operators.
+        console.error(`[events] processing ${stored.eventId} failed:`, error);
+      }),
+    );
     return NextResponse.json({ ok: true, received: stored.eventId }, { status: 202 });
   } catch (error) {
     // Unique violation on (integrationId, eventId) → idempotent duplicate.

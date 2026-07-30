@@ -14,8 +14,13 @@ import { handleEvent } from "@/lib/events/handlers";
  */
 
 export const MAX_ATTEMPTS = 5;
-/** After this long, RECEIVED/PROCESSING rows are considered stuck. */
-const STALE_AFTER_MS = 10 * 60_000;
+/**
+ * After this long, RECEIVED/PROCESSING rows are considered stuck and become
+ * claimable by the retry sweep. Configurable so acceptance tests can drive the
+ * sweep deterministically (0 = immediately claimable).
+ */
+const STALE_AFTER_MS =
+  Number(process.env.OPERANTO_STALE_EVENT_MINUTES ?? 10) * 60_000;
 
 export type ProcessOutcome =
   | "processed"

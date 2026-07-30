@@ -45,6 +45,20 @@ changing the key).
 - Suspension in Pronatona does NOT auto-suspend Operanto (deliberate — see
   event-schema.md); the timeline records `staff.suspended` so admins act.
 
+## Health endpoints
+
+| Endpoint | Auth | Reports |
+|---|---|---|
+| `GET /api/health` | public | overall ok (DB ping) |
+| `GET /api/health/database` | public | reachability + latency only |
+| `GET /api/health/redis` | public | rate-limit backend configured/answering (no URLs/tokens) |
+| `GET /api/health/worker` | `Bearer $CRON_SECRET` | pending/stuck/retryable/dead-letter counts + last processed time (aggregates only) |
+
+None of them expose credentials, connection strings, stack traces, or tenant
+data. Event-processing staleness window is `OPERANTO_STALE_EVENT_MINUTES`
+(default 10) — with the 5-minute sweep cron, a stuck event recovers within
+~15 minutes worst-case.
+
 ## Monitoring checklist
 
 - `GET /api/health` (DB connectivity) — wire into uptime monitoring.
