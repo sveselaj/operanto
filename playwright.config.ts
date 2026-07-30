@@ -25,17 +25,26 @@ export default defineConfig({
   use: {
     baseURL: remoteBaseUrl ?? "http://localhost:3000",
   },
+  // Locally the app is rebuilt with single-host URLs: NEXT_PUBLIC_* values are
+  // inlined at build time, so a build carrying the real hostnames would (very
+  // correctly) 404 every API call arriving on localhost. Host separation
+  // itself is covered by src/proxy.test.ts and, on staging, by running this
+  // suite with PLAYWRIGHT_BASE_URL against the real hosts.
+  //
+  // No stale-window override: shrinking it to zero would let the retry sweep
+  // re-claim events that after() is still processing. Per-event completion is
+  // confirmed via /api/internal/events/status, and retryPendingEvents itself
+  // is unit-tested in src/lib/events/process.test.ts.
   webServer: remoteBaseUrl
     ? undefined
     : {
+        // `pnpm test:e2e` rebuilds with the localhost URLs first; AUTH_URL is
+        // read at runtime, so the local value must be set here as well or the
+        // sign-in callback would redirect to the staging host.
         command: "pnpm start",
         url: "http://localhost:3000/api/health",
-        reuseExistingServer: true,
-        timeout: 90_000,
-        env: {
-          // Fresh events are immediately claimable by the retry sweep, so
-          // tests drive processing deterministically through the CRON path.
-          OPERANTO_STALE_EVENT_MINUTES: "0",
-        },
+        reuseExistingServer: false,
+        timeout: 120_000,
+        env: { AUTH_URL: "http://localhost:3000" },
       },
 });

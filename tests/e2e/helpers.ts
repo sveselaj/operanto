@@ -85,26 +85,58 @@ export async function postSignedEvent(
 }
 
 /**
- * Drive event processing to completion through the REAL retry path: the
- * CRON-protected sweep (the same mechanism staging uses), then poll the worker
- * health endpoint until nothing is pending. Requires the server to run with
- * OPERANTO_STALE_EVENT_MINUTES=0 so fresh events are immediately sweepable.
+ * Wait until a specific event reaches PROCESSED, driving the REAL retry sweep
+ * on the way (the same CRON-protected mechanism staging uses).
+ *
+ * Deliberately per-event rather than "global health is green": unrelated
+ * dead-lettered rows left by other tests must not make every later run fail,
+ * and a green global count must not be mistaken for "my event worked".
  */
-export async function processPendingEvents(request: APIRequestContext) {
+export async function waitForEventProcessed(
+  request: APIRequestContext,
+  eventId: string,
+) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) throw new Error("CRON_SECRET missing in env");
   const auth = { Authorization: `Bearer ${cronSecret}` };
 
-  for (let attempt = 0; attempt < 15; attempt++) {
-    await request.post("/api/internal/events/retry", { headers: auth });
-    const health = await request.get("/api/health/worker", { headers: auth });
-    if (health.ok()) {
-      const body = (await health.json()) as { pending: number; retryable: number };
-      if (body.pending === 0 && body.retryable === 0) return;
+  let lastStatus = "unknown";
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const res = await request.get(
+      `/api/internal/events/status?eventId=${encodeURIComponent(eventId)}`,
+      { headers: auth },
+    );
+    if (res.ok()) {
+      const body = (await res.json()) as {
+        found: boolean;
+        processingStatus?: string;
+      };
+      lastStatus = body.processingStatus ?? "absent";
+      if (body.processingStatus === "PROCESSED") return;
+      if (body.processingStatus === "DEAD_LETTER") {
+        throw new Error(`event ${eventId} dead-lettered`);
+      }
     }
+    // Nudge the real sweep, then wait before re-checking.
+    await request.post("/api/internal/events/retry", { headers: auth });
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  throw new Error("events still pending after retry sweeps");
+  throw new Error(`event ${eventId} not processed (last status: ${lastStatus})`);
+}
+
+/** Aggregate worker health (used to assert the sweep endpoint itself works). */
+export async function workerHealth(request: APIRequestContext) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) throw new Error("CRON_SECRET missing in env");
+  const res = await request.get("/api/health/worker", {
+    headers: { Authorization: `Bearer ${cronSecret}` },
+  });
+  return (await res.json()) as {
+    ok: boolean;
+    pending: number;
+    retryable: number;
+    deadLetter: number;
+  };
 }
 
 export async function login(page: Page, email: string, password: string) {
@@ -122,12 +154,24 @@ export function adminCredentials() {
   return { email, password };
 }
 
-export const OPERATOR = {
-  email: "operator@operanto.local",
-  password: "operator-test-Passw0rd1",
-};
+/**
+ * Fixture credentials come from the environment — the same variables the seed
+ * requires. Nothing here is a hardcoded, committed password.
+ */
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} missing in env (required for e2e)`);
+  return value;
+}
+
+export function operatorCredentials() {
+  return {
+    email: "operator@operanto.local",
+    password: requiredEnv("SEED_TEST_OPERATOR_PASSWORD"),
+  };
+}
 
 export const FOREIGN_ADMIN = {
   email: "admin@isolation-test.local",
-  password: "isolation-test-Admin1-long",
+  password: () => requiredEnv("SEED_TEST_ISOLATION_ADMIN_PASSWORD"),
 };

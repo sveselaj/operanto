@@ -53,6 +53,7 @@ changing the key).
 | `GET /api/health/database` | public | reachability + latency only |
 | `GET /api/health/redis` | public | rate-limit backend configured/answering (no URLs/tokens) |
 | `GET /api/health/worker` | `Bearer $CRON_SECRET` | pending/stuck/retryable/dead-letter counts + last processed time (aggregates only) |
+| `GET /api/internal/events/status?eventId=…` | `Bearer $CRON_SECRET` | processing status of ONE event (status, attempts, timestamps — no payload) |
 
 None of them expose credentials, connection strings, stack traces, or tenant
 data. Event-processing staleness window is `OPERANTO_STALE_EVENT_MINUTES`

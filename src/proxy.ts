@@ -104,5 +104,9 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next|favicon.ico|.*\\..*).*)"],
+  // Everything except Next's build output. Deliberately NOT excluding paths
+  // that merely contain a dot: dynamic segments such as /customers/[id],
+  // /opportunities/[id] and /invite/[token] can legitimately contain dots, and
+  // excluding them would silently skip host separation for those requests.
+  matcher: ["/((?!_next/).*)"],
 };

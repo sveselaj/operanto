@@ -18,13 +18,23 @@ environment** — always.
 
 | Record | Type | Value |
 |---|---|---|
-| `operanto.ai` | A / ALIAS | Vercel (`76.76.21.21` or as instructed by Vercel) |
-| `www` | CNAME | `cname.vercel-dns.com` (redirect to apex in Vercel) |
-| `app` | CNAME | `cname.vercel-dns.com` |
-| `api` | CNAME | `cname.vercel-dns.com` |
-| `staging` | CNAME | `cname.vercel-dns.com` (staging project) |
-| `api-staging` | CNAME | `cname.vercel-dns.com` (staging project) |
-| future: `docs`, `status` | CNAME | reserved |
+Registrar/DNS host: GoDaddy (`ns59/ns60.domaincontrol.com`). Nameservers are
+deliberately NOT delegated to Vercel, so records are added at the registrar.
+Apply exactly these; leave every unrelated record (incl. the existing
+`_dmarc` TXT) untouched:
+
+| Host | Type | Value | TTL |
+|---|---|---|---|
+| `@` | A | `76.76.21.21` | 600 |
+| `www` | CNAME | `cname.vercel-dns.com.` | 600 |
+| `staging` | CNAME | `cname.vercel-dns.com.` | 600 |
+| `api-staging` | CNAME | `cname.vercel-dns.com.` | 600 |
+
+The existing parking A records (`15.197.148.33`, `3.33.130.190`) on `@` and
+the `www` CNAME to the apex must be replaced by the values above. `app` and
+`api` are intentionally NOT created yet — production cockpit/API are reserved
+but inactive. Certificates are issued by Vercel automatically once the records
+resolve.
 
 ## Host routing (one Next.js project, several hosts)
 
@@ -81,6 +91,9 @@ UPSTASH_REDIS_REST_URL= / UPSTASH_REDIS_REST_TOKEN=  # staging instance
 RESEND_API_KEY= / EMAIL_FROM=                        # optional (dev-log fallback)
 SENTRY_DSN= / NEXT_PUBLIC_SENTRY_DSN=                # optional
 SEED_ADMIN_EMAIL= / SEED_ADMIN_NAME= / SEED_ADMIN_PASSWORD=  # for the seed run only
+# Acceptance-test fixtures ONLY (never in production; the seed refuses when
+# NODE_ENV=production and requires these to be set explicitly):
+SEED_TEST_OPERATOR_PASSWORD= / SEED_TEST_ISOLATION_ADMIN_PASSWORD=
 ```
 
 See `.env.example` for the complete annotated list. Production values:
@@ -102,15 +115,16 @@ SENTRY_DSN / NEXT_PUBLIC_SENTRY_DSN ← optional
 ## Deploy steps (per environment)
 
 1. Provision the Neon database; set `DATABASE_URL`/`DIRECT_URL`.
-2. `pnpm prisma db push` (first deploy; move to `prisma migrate` before
-   schema changes reach production data).
+2. `pnpm db:deploy` (`prisma migrate deploy`) — reviewed migrations only.
+   Never `db push`, never `migrate reset`, against staging or production.
 3. Set all env vars; deploy; check `GET /api/health`.
 4. `pnpm db:seed` (locally, pointed at that database) with `SEED_ADMIN_*`,
    `PRONATONA_WEBHOOK_SECRET`, `PRONATONA_SOURCE_ORGANISATION_ID` — creates
    the Pronatona organisation, the first admin, and the ACTIVE integration.
-5. Add a scheduler for the retry sweep: Vercel cron (or external) hitting
-   `POST /api/internal/events/retry` with `Authorization: Bearer $CRON_SECRET`
-   every 5 minutes.
+5. The retry sweep is scheduled by `vercel.json` (every 5 minutes); Vercel
+   sends `GET /api/internal/events/retry` with `Authorization: Bearer
+   $CRON_SECRET` automatically. The route accepts GET and POST. Cron timing is
+   best-effort — nothing may depend on exact execution times.
 6. Sign in, invite real users (`/settings/users`), map Pronatona staff ids
    (`/integrations/pronatona`).
 

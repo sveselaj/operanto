@@ -31,6 +31,17 @@ function encryptSecret(plaintext: string): string {
   return `v1:${iv.toString("base64")}:${tag.toString("base64")}:${ciphertext.toString("base64")}`;
 }
 
+/** Fixture passwords come from the environment; never from this file. */
+function requiredFixturePassword(name: string): string {
+  const value = process.env[name];
+  if (!value || value.length < 16) {
+    throw new Error(
+      `${name} must be set (min 16 chars) to seed acceptance-test fixtures`,
+    );
+  }
+  return value;
+}
+
 async function upsertOrgWithAdmin(input: {
   name: string;
   slug: string;
@@ -124,21 +135,41 @@ async function main() {
     console.log(`Integration created: ${integration.id}`);
   }
 
-  if (process.env.SEED_SECOND_ORG === "1" || process.env.SEED_TEST_USERS === "1") {
+  // ── Acceptance-test fixtures (Playwright) ────────────────────────
+  //
+  // These create real, ACTIVE login accounts, so they are gated twice: they
+  // refuse to run when NODE_ENV=production, and their passwords must be
+  // supplied through the environment — never hardcoded here, because anything
+  // in this file is a published credential.
+  const wantFixtures =
+    process.env.SEED_TEST_USERS === "1" || process.env.SEED_SECOND_ORG === "1";
+
+  if (wantFixtures && process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Refusing to seed test fixtures with NODE_ENV=production. " +
+        "Fixture accounts must never exist in a production database.",
+    );
+  }
+
+  if (wantFixtures) {
+    const isolationPassword = requiredFixturePassword(
+      "SEED_TEST_ISOLATION_ADMIN_PASSWORD",
+    );
     await upsertOrgWithAdmin({
       name: "Isolation Test Org",
       slug: "isolation-test",
       adminEmail: "admin@isolation-test.local",
       adminName: "Isolation Admin",
-      adminPassword: "isolation-test-Admin1-long",
+      adminPassword: isolationPassword,
     });
-    console.log("Second organisation seeded (isolation-test).");
+    console.log("Fixture organisation seeded (isolation-test).");
   }
 
-  // Acceptance-test fixtures (Playwright). Never enable in production:
-  // fixed credentials, meant for local/staging verification runs only.
   if (process.env.SEED_TEST_USERS === "1") {
-    const operatorHash = await bcrypt.hash("operator-test-Passw0rd1", 12);
+    const operatorPassword = requiredFixturePassword(
+      "SEED_TEST_OPERATOR_PASSWORD",
+    );
+    const operatorHash = await bcrypt.hash(operatorPassword, 12);
     const operator = await prisma.user.upsert({
       where: { email: "operator@operanto.local" },
       create: {
@@ -148,7 +179,9 @@ async function main() {
         status: "ACTIVE",
         passwordUpdatedAt: new Date(),
       },
-      update: {},
+      // Keep the password in sync with the env on re-seed so a rotated
+      // fixture password actually takes effect.
+      update: { passwordHash: operatorHash, passwordUpdatedAt: new Date() },
     });
     await prisma.membership.upsert({
       where: {
@@ -165,7 +198,7 @@ async function main() {
       },
       update: { role: "OPERATOR", status: "ACTIVE" },
     });
-    console.log("Test operator seeded (operator@operanto.local).");
+    console.log("Fixture operator seeded (operator@operanto.local).");
   }
 
   console.log(`Seed complete. Organisation: ${organisation.slug} (${organisation.id})`);
