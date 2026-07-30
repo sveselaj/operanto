@@ -45,6 +45,26 @@ describe("production host separation", () => {
     expect(res.headers.get("location")).toContain("/dashboard");
   });
 
+  it("marketing host serves no application API (only health + scheduler)", () => {
+    expect(
+      proxy(req("https://x/api/v1/integrations/pronatona/events", "operanto.ai")).status,
+    ).toBe(404);
+    expect(proxy(req("https://x/api/auth/session", "operanto.ai")).status).toBe(404);
+    // Uptime probes and the CRON_SECRET-protected scheduler stay reachable.
+    expect(proxy(req("https://x/api/health", "operanto.ai")).status).toBe(200);
+    expect(proxy(req("https://x/api/health/database", "operanto.ai")).status).toBe(200);
+    expect(
+      proxy(req("https://x/api/internal/events/retry", "operanto.ai")).status,
+    ).toBe(200);
+  });
+
+  it("cockpit host keeps auth but not the ingestion surface", () => {
+    expect(proxy(req("https://x/api/auth/session", "app.operanto.ai")).status).toBe(200);
+    expect(
+      proxy(req("https://x/api/v1/integrations/pronatona/events", "app.operanto.ai")).status,
+    ).toBe(404);
+  });
+
   it("marketing host redirects cockpit paths to the app host", () => {
     const res = proxy(req("https://x/dashboard", "operanto.ai"));
     expect(res.status).toBe(307);
@@ -59,7 +79,11 @@ describe("production host separation", () => {
       proxy(req("https://x/dashboard", "evil.example.com")).headers.get("location"),
     ).toBe("https://app.operanto.ai/dashboard");
     expect(proxy(req("https://x/api/v1/integrations/pronatona/events", "evil.example.com")).status).toBe(404);
+    expect(proxy(req("https://x/api/auth/session", "evil.example.com")).status).toBe(404);
     expect(proxy(req("https://x/api/health", "preview-abc.vercel.app")).status).toBe(200);
+    expect(
+      proxy(req("https://x/api/internal/events/retry", "preview-abc.vercel.app")).status,
+    ).toBe(200);
     expect(proxy(req("https://x/", "preview-abc.vercel.app")).status).toBe(200);
   });
 

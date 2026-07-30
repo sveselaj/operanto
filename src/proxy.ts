@@ -51,6 +51,25 @@ function isCockpitPath(pathname: string): boolean {
   );
 }
 
+/** Uptime probes — safe to answer on any host, expose no configuration. */
+function isHealthPath(pathname: string): boolean {
+  return pathname === "/api/health" || pathname.startsWith("/api/health/");
+}
+
+/**
+ * Scheduler surface (retry sweep, event status). Every route behind it
+ * requires CRON_SECRET, and the platform scheduler addresses the deployment's
+ * production alias rather than a host we choose, so it is answered anywhere.
+ */
+function isSchedulerPath(pathname: string): boolean {
+  return pathname.startsWith("/api/internal/");
+}
+
+/** Auth.js endpoints belong to the cockpit host only. */
+function isAuthPath(pathname: string): boolean {
+  return pathname.startsWith("/api/auth/");
+}
+
 export function proxy(request: NextRequest) {
   const siteHost = hostOf(process.env.NEXT_PUBLIC_SITE_URL);
   const appHost = hostOf(process.env.NEXT_PUBLIC_APP_URL);
@@ -71,6 +90,10 @@ export function proxy(request: NextRequest) {
   }
 
   if (requestHost === appHost) {
+    // The event-ingestion surface belongs to the API host alone.
+    if (pathname.startsWith("/api/v1/")) {
+      return new NextResponse(null, { status: 404 });
+    }
     // Combined-host mode (staging: site == app) serves marketing too;
     // dedicated app host redirects "/" into the cockpit.
     if (pathname === "/" && siteHost !== appHost) {
@@ -80,10 +103,19 @@ export function proxy(request: NextRequest) {
   }
 
   if (requestHost === siteHost) {
-    // Marketing host: cockpit lives on the app domain.
+    // Marketing host: cockpit lives on the app domain…
     if (isCockpitPath(pathname)) {
       const target = new URL(pathname + request.nextUrl.search, `https://${appHost}`);
       return NextResponse.redirect(target);
+    }
+    // …and no application API answers here. Health probes and the
+    // secret-protected scheduler surface are the only exceptions.
+    if (
+      pathname.startsWith("/api/") &&
+      !isHealthPath(pathname) &&
+      !isSchedulerPath(pathname)
+    ) {
+      return new NextResponse(null, { status: 404 });
     }
     return NextResponse.next();
   }
@@ -95,7 +127,7 @@ export function proxy(request: NextRequest) {
     );
   }
   if (pathname.startsWith("/api/")) {
-    if (pathname === "/api/health" || pathname.startsWith("/api/health/")) {
+    if (isHealthPath(pathname) || isSchedulerPath(pathname)) {
       return NextResponse.next();
     }
     return new NextResponse(null, { status: 404 });
