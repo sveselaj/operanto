@@ -2,9 +2,8 @@
 
 ## Post-DNS verification attempt — 2026-07-30 ~12:50 CEST — **BLOCKED**
 
-**Deployed commit:** `c6a74d983234b2202c2a4718f884495ce52e37bb` (`c6a74d9`),
-Vercel project `inovativi/operanto`, production deployment `operanto-qwynev0e5`,
-aliased to `operanto.ai`.
+**Deployed commit:** `5f04780c45ab24afa8a717f093a8f765dd090fec` (`5f04780`),
+Vercel project `inovativi/operanto`, aliased to `operanto.ai`.
 
 Post-DNS verification of items 1–11 **could not start**: the DNS records have
 not reached the `operanto.ai` zone. This is not propagation delay or resolver
@@ -54,6 +53,40 @@ PLAYWRIGHT_BASE_URL=https://staging.operanto.ai pnpm test:e2e:remote   # item 8 
 
 Certificates are issued by Vercel automatically once the records resolve;
 allow a few minutes after propagation before the certificate probes pass.
+
+### Verified without DNS, by Host-header simulation against a build carrying the real hostnames
+
+Item 6 and item 7 were exercised this round by building with the production
+`NEXT_PUBLIC_*` values and addressing the running server with each real
+`Host` header. This is the same input the proxy sees in production, so the
+routing decisions are meaningful; it does **not** substitute for the TLS,
+certificate, cookie-scope and platform-routing behaviour of the real hosts.
+
+| Host | Path | Result |
+|---|---|---|
+| `operanto.ai` | `/`, `/product` | 200 (marketing) |
+| `operanto.ai` | `/dashboard` | 307 → `https://staging.operanto.ai/dashboard` |
+| `operanto.ai` | `POST /api/v1/integrations/pronatona/events` | **404** |
+| `operanto.ai` | `/api/auth/session` | **404** |
+| `operanto.ai` | `/api/health`, `/api/health/database` | 200 |
+| `operanto.ai` | `/api/internal/events/retry` (no secret) | 401 |
+| `staging.operanto.ai` | `/login` | 200 |
+| `staging.operanto.ai` | `/dashboard` unauthenticated | 307 → `/login` |
+| `staging.operanto.ai` | `/api/auth/session` | 200 |
+| `staging.operanto.ai` | `POST /api/v1/…` | **404** |
+| `api-staging.operanto.ai` | `/api/health` | 200 |
+| `api-staging.operanto.ai` | `/`, `/dashboard`, `/customers/a.b`, `/invite/tok.en` | **404** (no marketing or cockpit HTML, dotted paths included) |
+| `api-staging.operanto.ai` | `POST /api/v1/…` (no signature headers) | 401 |
+| unknown host (`evil.example.com`, `*.vercel.app`) | `POST /api/v1/…`, `/api/auth/session` | **404**; marketing and `/api/health*` remain 200 |
+
+**Defect found and fixed this round:** the marketing host was answering the
+ingestion route with `401 missing_headers` instead of 404 — the proxy only
+restricted `/api/*` on *unknown* hosts, so `operanto.ai` exposed an API
+surface that the deployment brief forbids. Fixed in `5f04780`; the marketing
+host now serves no application API (health probes and the CRON_SECRET-gated
+scheduler surface are the only exceptions), and the cockpit host keeps
+`/api/auth/*` but 404s `/api/v1/*`. Covered by two new cases in
+`src/proxy.test.ts` (49 unit tests total).
 
 Still explicitly **incomplete/unprovisioned** regardless of DNS: shared
 Upstash Redis, Sentry, Resend invitation email delivery.
