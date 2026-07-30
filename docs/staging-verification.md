@@ -1,5 +1,66 @@
 # Staging verification record
 
+## Post-DNS verification attempt — 2026-07-30 ~12:50 CEST — **BLOCKED**
+
+**Deployed commit:** `c6a74d983234b2202c2a4718f884495ce52e37bb` (`c6a74d9`),
+Vercel project `inovativi/operanto`, production deployment `operanto-qwynev0e5`,
+aliased to `operanto.ai`.
+
+Post-DNS verification of items 1–11 **could not start**: the DNS records have
+not reached the `operanto.ai` zone. This is not propagation delay or resolver
+caching — the registrar's own authoritative nameservers still serve the old
+records, and the zone serial is unchanged.
+
+Evidence (all timestamps 2026-07-30, ~12:50 CEST):
+
+| Probe | Result |
+|---|---|
+| `dig @ns59.domaincontrol.com operanto.ai A` | `3.33.130.190`, `15.197.148.33` (registrar parking; expected `76.76.21.21`) |
+| `dig @ns59.domaincontrol.com operanto.ai SOA` | serial `2026073000` — **identical** to the pre-change snapshot taken before any work began, i.e. the zone has not been edited |
+| `dig @ns59.domaincontrol.com staging.operanto.ai` | no record |
+| `dig @ns59.domaincontrol.com api-staging.operanto.ai` | no record |
+| `dig @ns59.domaincontrol.com www.operanto.ai CNAME` | `operanto.ai.` (old CNAME; expected `cname.vercel-dns.com.`) |
+| Vercel domain config API, all four domains | `misconfigured: true`; apex `aValues: [3.33.130.190, 15.197.148.33]`, subdomains empty |
+| TLS to `76.76.21.21` with SNI for each of the four hostnames | handshake fails — no certificate issued (the same edge IP completes a handshake for the project's `*.vercel.app` hostname, so the edge itself is reachable) |
+| `dig +short TXT _dmarc.operanto.ai` | `v=DMARC1; p=quarantine; …` — **preserved, unchanged** |
+
+Consequently: items 1 and 2 FAIL; items 3–11 are **not executable** and are
+recorded as blocked rather than assumed. Nothing was marked verified on the
+basis of local behaviour.
+
+**Required records at GoDaddy** (`ns59/ns60.domaincontrol.com`) — unchanged
+from the previous report:
+
+| Host | Type | Value | TTL |
+|---|---|---|---|
+| `@` | A | `76.76.21.21` | 600 |
+| `www` | CNAME | `cname.vercel-dns.com.` | 600 |
+| `staging` | CNAME | `cname.vercel-dns.com.` | 600 |
+| `api-staging` | CNAME | `cname.vercel-dns.com.` | 600 |
+
+Delete the two parking A records on `@` and the `www → operanto.ai` CNAME.
+Common reasons an edit does not take effect: the change was made in a
+different GoDaddy account or on a different domain; GoDaddy **Domain
+Forwarding / parking** is still enabled and re-asserts the parking A records
+(disable Forwarding first); or the edit was not saved/published.
+
+**Re-run when the records are live** — the whole checklist is automated:
+
+```sh
+./scripts/verify-staging.sh --dns-only     # gate: resolution + certificates
+./scripts/verify-staging.sh                # items 1,2,3,4,5,6,7,9,10,11
+PLAYWRIGHT_BASE_URL=https://staging.operanto.ai pnpm test:e2e:remote   # item 8 + 9
+```
+
+Certificates are issued by Vercel automatically once the records resolve;
+allow a few minutes after propagation before the certificate probes pass.
+
+Still explicitly **incomplete/unprovisioned** regardless of DNS: shared
+Upstash Redis, Sentry, Resend invitation email delivery.
+
+---
+
+
 **Date:** 2026-07-30
 **Operanto commit under test:** see `git log` on `feat/pronatona-projection-mvp` (tip at time of writing: the "Harden acceptance suite…" commit).
 **Environment:** Operanto production build (`next build && next start`) backed by the **Neon staging database**; host-routing behaviour additionally unit-tested. Pronatona verification ran against a local scratch database (`pronatona_test`) — never the live Pronatona database.
