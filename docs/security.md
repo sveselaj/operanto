@@ -34,7 +34,9 @@ assignment checks.
 | Cross-tenant access via direct IDs | every query is organisation-scoped from a DB-verified membership; verified: foreign-org admin receives 404 on another org's opportunity |
 | Privilege escalation via stale JWT | JWT carries only user id + issue time; role/status/permissions re-read from DB per request; `sessionsRevokedAt` invalidates all sessions instantly |
 | Operator overreach | record-level filters (`assignedMembershipId`) composed into queries, not checked after fetch |
-| Account takeover | invitation-only onboarding (no public registration), bcrypt cost 12, timing-equalized login, per-account + per-invite rate limits, 12+ char password policy, password change revokes all sessions |
+| Account takeover | invitation-only onboarding (no public registration), bcrypt cost 12, timing-equalized login, per-account + per-IP rate limits, 12+ char password policy, password change revokes all sessions, **TOTP second factor mandatory for ADMIN and SUPERVISOR** |
+| Stolen or observed TOTP code | the accepted counter is recorded, so a code cannot be replayed within its window; recovery codes are single-use and stored hashed |
+| Personal data accumulating indefinitely | raw event payloads redacted after `OPERANTO_PAYLOAD_RETENTION_DAYS`; erasure and restriction of processing available per customer (docs/privacy.md) |
 | Invitation token leakage | 32 random bytes, only SHA-256 hash at rest, 7-day expiry, single-use (atomic claim), raw token never logged |
 | Lockout / sabotage | final-admin protection: the last active ADMIN cannot be demoted or suspended; self-suspension blocked |
 | Source system compromised | blast radius = that integration's org projections; staff events cannot touch Operanto access; disable the integration (single switch) and rotate the secret |
@@ -50,7 +52,8 @@ assignment checks.
   authentication and invitation limits **fail closed** (deny) while event
   ingestion falls back to memory; see `docs/production-activation.md` for the
   per-limit table and rationale.
-- No 2FA yet; mitigate with strong passwords + instant revocation.
+- Data-subject export (Art. 15/20) is manual; cross-system erasure requires
+  running the procedure in both Pronatona and Operanto (docs/privacy.md).
 - CSP allows `'unsafe-inline'` scripts (Next.js bootstrap); nonce-based CSP is
   a follow-up.
 - Event processing runs in the web process (`after()` + cron retry) rather
