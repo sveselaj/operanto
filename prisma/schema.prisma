@@ -112,6 +112,16 @@ model Invitation {
   acceptedAt      DateTime?
   createdAt       DateTime       @default(now())
 
+  /// Delivery state is tracked separately from creation: an invitation whose
+  /// email failed to send must never look delivered, or an administrator will
+  /// wait for a message that never arrives.
+  deliveredAt      DateTime?
+  deliveryAttempts Int       @default(0)
+  lastDeliveryError String?
+  /// Superseded by a newer invitation for the same address, or withdrawn.
+  /// A revoked invitation can never be accepted, even before it expires.
+  revokedAt        DateTime?
+
   organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
 
   @@index([organisationId, email])

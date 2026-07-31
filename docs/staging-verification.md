@@ -1,5 +1,56 @@
 # Staging verification record
 
+## Upstash staging provisioning — checklist (owner action pending)
+
+The staging Upstash database exists (`amused-firefly-67823.upstash.io`,
+eu-central-1, created 2026-07-31) and `UPSTASH_REDIS_REST_URL` is set locally.
+**`UPSTASH_REDIS_REST_TOKEN` is still missing** — it was masked in the console
+screenshot, so nothing has been configured in Vercel and Redis remains
+unverified.
+
+### Environment-variable convention — one only
+
+```
+UPSTASH_REDIS_REST_URL=https://amused-firefly-67823.upstash.io
+UPSTASH_REDIS_REST_TOKEN=<from the Upstash console: Connect → REST>
+```
+
+A bare `REDIS_URL` (the `redis://…:6379` form shown in the console's TCP tab)
+is **not read by any code path** and must not be set: two conventions mean one
+is silently ignored, and a rate limiter that is silently not running is worse
+than none.
+
+### Steps once the token is supplied
+
+1. Set both variables in the **Operanto staging environment only** (Vercel →
+   Project → Settings → Environment Variables), not in Pronatona.
+2. Redeploy — Vercel does not apply changed variables to existing deployments.
+3. `GET https://api-staging.operanto.ai/api/health/redis` → expect
+   `{"ok":true,"configured":true,"latencyMs":…}`.
+4. Confirm no credential appears in any response body or log line (the health
+   endpoint deliberately returns no URL or token).
+5. Drive 11 failed logins for one account within 15 minutes; the 11th must be
+   refused.
+6. Repeat from a different client/IP: because the counter is per-account and
+   shared, it must **still** be refused — that is the proof it is not a
+   per-instance memory counter.
+7. Confirm the per-IP policy independently: 41 failed logins across different
+   accounts from one IP must trip `login:ip:*` (40 / 15 min).
+8. Point `UPSTASH_REDIS_REST_URL` at an unreachable host, redeploy, and confirm
+   sign-in is **refused** with "Sign-in is temporarily unavailable" — not
+   silently degraded.
+9. Confirm invitation acceptance also refuses in that state.
+10. Confirm signed event ingestion still returns 202 while Redis is down
+    (ingestion falls back to per-instance memory by design).
+11. Restore the correct URL, redeploy, and confirm sign-in works again with no
+    database intervention.
+12. Record the evidence in this document.
+
+Until step 12 is complete, **distributed rate limiting remains incomplete** and
+staging should not be opened to a wider operational team.
+
+---
+
 ## Controlled merge and post-merge verification — 2026-07-31, 09:10–09:30 CEST
 
 ### Merge hashes

@@ -12,6 +12,7 @@ import { formatDateTime } from "@/lib/format";
 import { InviteForm } from "./invite-form";
 import {
   changeRoleAction,
+  resendInvitationAction,
   revokeSessionsAction,
   setMemberStatusAction,
 } from "./actions";
@@ -146,11 +147,35 @@ export default async function UsersSettingsPage() {
                 <p className="text-muted-foreground">None outstanding.</p>
               ) : (
                 invitations.map((invitation) => (
-                  <div key={invitation.id} className="flex justify-between gap-2">
-                    <span className="truncate">{invitation.email}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {invitation.role} · expires {formatDateTime(invitation.expiresAt)}
-                    </span>
+                  <div key={invitation.id} className="space-y-1 border-b border-border pb-2 last:border-0">
+                    <div className="flex justify-between gap-2">
+                      <span className="truncate">{invitation.email}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {invitation.role} · expires{" "}
+                        {formatDateTime(invitation.expiresAt)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={
+                          invitation.deliveredAt
+                            ? "text-xs text-success"
+                            : "text-xs text-warning"
+                        }
+                      >
+                        {invitation.deliveredAt
+                          ? `Sent ${formatDateTime(invitation.deliveredAt)}`
+                          : invitation.deliveryAttempts > 0
+                            ? "Not delivered"
+                            : "Not sent yet"}
+                      </span>
+                      <form action={resendInvitationAction}>
+                        <input type="hidden" name="invitationId" value={invitation.id} />
+                        <Button type="submit" variant="outline" size="sm">
+                          Resend
+                        </Button>
+                      </form>
+                    </div>
                   </div>
                 ))
               )}

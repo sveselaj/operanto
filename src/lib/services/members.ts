@@ -11,7 +11,7 @@ import {
   hashInvitationToken,
   invitationUrl,
 } from "@/lib/invitations";
-import { sendMail } from "@/lib/email";
+import { deliverInvitation } from "@/lib/email";
 import { passwordSchema, BCRYPT_ROUNDS } from "@/lib/passwords";
 
 /**
@@ -32,7 +32,12 @@ export async function listMembers(ctx: OrgContext) {
 export async function listPendingInvitations(ctx: OrgContext) {
   requirePermission(ctx.membership.role, "members:manage");
   return prisma.invitation.findMany({
-    where: { ...scope(ctx), acceptedAt: null, expiresAt: { gt: new Date() } },
+    where: {
+      ...scope(ctx),
+      acceptedAt: null,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
     orderBy: { createdAt: "desc" },
   });
 }
@@ -40,7 +45,7 @@ export async function listPendingInvitations(ctx: OrgContext) {
 export async function inviteMember(
   ctx: OrgContext,
   input: { email: string; role: MembershipRole },
-): Promise<{ devInviteUrl?: string }> {
+): Promise<{ delivered: boolean; reason?: string; devInviteUrl?: string }> {
   requirePermission(ctx.membership.role, "members:manage");
   const email = input.email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Invalid email");
@@ -54,31 +59,127 @@ export async function inviteMember(
   }
 
   const { token, tokenHash } = generateInvitationToken();
-  await prisma.invitation.create({
-    data: {
-      organisationId: ctx.organisation.id,
-      email,
-      role: input.role,
-      tokenHash,
-      invitedByUserId: ctx.user.id,
-      expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
-    },
+  const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
+
+  const invitation = await prisma.$transaction(async (tx) => {
+    // Issuing a new invitation invalidates any earlier outstanding one for the
+    // same address: two live links would mean revoking one leaves a way in.
+    await tx.invitation.updateMany({
+      where: { ...scope(ctx), email, acceptedAt: null, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return tx.invitation.create({
+      data: {
+        organisationId: ctx.organisation.id,
+        email,
+        role: input.role,
+        tokenHash,
+        invitedByUserId: ctx.user.id,
+        expiresAt,
+      },
+    });
   });
+
   await audit(ctx, {
     eventType: "member.invited",
     targetType: "Invitation",
+    targetId: invitation.id,
     after: { email, role: input.role },
   });
 
-  const url = invitationUrl(token);
-  const { delivered } = await sendMail({
+  return deliverExisting(ctx, invitation.id, email, input.role, expiresAt, token);
+}
+
+/** Shared by invite and resend so both record delivery state identically. */
+async function deliverExisting(
+  ctx: OrgContext,
+  invitationId: string,
+  email: string,
+  role: MembershipRole,
+  expiresAt: Date,
+  token: string,
+): Promise<{ delivered: boolean; reason?: string; devInviteUrl?: string }> {
+  const result = await deliverInvitation({
     to: email,
-    subject: `You have been invited to ${ctx.organisation.name} on Operanto`,
-    text: `You have been invited to join ${ctx.organisation.name} on Operanto as ${input.role}.\n\nAccept the invitation (valid 7 days):\n${url}\n\nIf you did not expect this email you can ignore it.`,
+    organisationName: ctx.organisation.name,
+    role,
+    acceptUrl: invitationUrl(token),
+    expiresAt,
   });
-  // In development (no email provider) surface the link to the admin UI once;
-  // it is never logged with the token by any other path.
-  return delivered ? {} : { devInviteUrl: url };
+
+  // Delivery state reflects what actually happened — a failed send must never
+  // leave an administrator believing the message is on its way.
+  await prisma.invitation.update({
+    where: { id: invitationId },
+    data: {
+      deliveryAttempts: { increment: 1 },
+      deliveredAt: result.delivered ? new Date() : null,
+      lastDeliveryError: result.delivered ? null : result.reason.slice(0, 500),
+    },
+  });
+
+  await audit(ctx, {
+    eventType: result.delivered
+      ? "member.invitation_delivered"
+      : "member.invitation_delivery_failed",
+    targetType: "Invitation",
+    targetId: invitationId,
+    after: { delivered: result.delivered },
+  });
+
+  return result.delivered
+    ? { delivered: true }
+    : { delivered: false, reason: result.reason, devInviteUrl: result.previewUrl };
+}
+
+/**
+ * Re-issue an invitation. A fresh token is minted and the previous one is
+ * revoked, so a resend can never leave two usable links outstanding.
+ */
+export async function resendInvitation(
+  ctx: OrgContext,
+  invitationId: string,
+): Promise<{ delivered: boolean; reason?: string; devInviteUrl?: string }> {
+  requirePermission(ctx.membership.role, "members:manage");
+  const existing = await prisma.invitation.findFirst({
+    where: { ...scope(ctx), id: invitationId, acceptedAt: null },
+  });
+  if (!existing) throw new Error("Invitation not found or already accepted");
+
+  const { token, tokenHash } = generateInvitationToken();
+  const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
+  const replacement = await prisma.$transaction(async (tx) => {
+    await tx.invitation.update({
+      where: { id: existing.id },
+      data: { revokedAt: new Date() },
+    });
+    return tx.invitation.create({
+      data: {
+        organisationId: existing.organisationId,
+        email: existing.email,
+        role: existing.role,
+        tokenHash,
+        invitedByUserId: ctx.user.id,
+        expiresAt,
+      },
+    });
+  });
+
+  await audit(ctx, {
+    eventType: "member.invitation_resent",
+    targetType: "Invitation",
+    targetId: replacement.id,
+    before: { replacedInvitationId: existing.id },
+  });
+
+  return deliverExisting(
+    ctx,
+    replacement.id,
+    existing.email,
+    existing.role,
+    expiresAt,
+    token,
+  );
 }
 
 export async function acceptInvitation(input: {
@@ -91,7 +192,12 @@ export async function acceptInvitation(input: {
     where: { tokenHash },
     include: { organisation: true },
   });
-  if (!invitation || invitation.acceptedAt || invitation.expiresAt < new Date()) {
+  if (
+    !invitation ||
+    invitation.acceptedAt ||
+    invitation.revokedAt ||
+    invitation.expiresAt < new Date()
+  ) {
     throw new Error("Invitation is invalid or has expired");
   }
   const name = input.name.trim();

@@ -1,5 +1,7 @@
 # Operanto
 
+[![CI](https://github.com/sveselaj/operanto/actions/workflows/ci.yml/badge.svg)](https://github.com/sveselaj/operanto/actions/workflows/ci.yml)
+
 **Customer operations that remember, continue, and resolve.**
 
 Operanto is a multi-tenant operational cockpit: it receives signed domain
