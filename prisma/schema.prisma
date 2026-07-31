@@ -199,7 +199,13 @@ model InboundEvent {
   occurredAt           DateTime
   receivedAt           DateTime              @default(now())
   correlationId        String?
+  /// The event exactly as received. It contains the customer's name, email,
+  /// phone and free text, so it is redacted once it is no longer needed for
+  /// replay or debugging — see payloadRedactedAt and the retention sweep.
   rawPayload           Json
+  /// Set when rawPayload was replaced by a minimal, non-personal skeleton,
+  /// either by the retention sweep or by an erasure request.
+  payloadRedactedAt    DateTime?
   processingStatus     EventProcessingStatus @default(RECEIVED)
   attemptCount         Int                   @default(0)
   lastError            String?
@@ -229,6 +235,13 @@ model Customer {
   preferredLanguage  String?
   preferredChannel   String?
   matchReason        String? // why the latest inbound identity resolved to this row
+  /// Personal data erased on request (GDPR Art. 17). The row survives as a
+  /// tombstone so opportunities, timeline and audit stay referentially intact
+  /// and the erasure itself remains provable.
+  erasedAt           DateTime?
+  /// Processing restricted (GDPR Art. 18): data is retained but must not be
+  /// used. Inbound events for this customer are stored and then held.
+  restrictedAt       DateTime?
   firstInteractionAt DateTime?
   lastInteractionAt  DateTime?
   createdAt          DateTime  @default(now())

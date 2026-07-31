@@ -58,7 +58,9 @@ export async function findOrCreateCustomer(
 
   if (!existing && emailNormalized) {
     existing = await tx.customer.findFirst({
-      where: { organisationId, emailNormalized },
+      // erasedAt: null — an erased record is a tombstone. Re-matching to it
+      // would repopulate the very fields the person asked us to remove.
+      where: { organisationId, emailNormalized, erasedAt: null },
       orderBy: { createdAt: "asc" },
     });
     if (existing) matchReason = "email_exact";
@@ -66,10 +68,16 @@ export async function findOrCreateCustomer(
 
   if (!existing && phoneNormalized) {
     existing = await tx.customer.findFirst({
-      where: { organisationId, phoneNormalized },
+      where: { organisationId, phoneNormalized, erasedAt: null },
       orderBy: { createdAt: "asc" },
     });
     if (existing) matchReason = "phone_exact";
+  }
+
+  // A tombstone found by source id is likewise never reused.
+  if (existing?.erasedAt) {
+    existing = null;
+    matchReason = null;
   }
 
   if (existing && matchReason) {

@@ -20,7 +20,9 @@ export type Permission =
   | "tasks:manage"
   | "notes:add"
   | "activity:view_all"
-  | "audit:view";
+  | "audit:view"
+  /** Erasure and restriction of processing — organisation-wide effect. */
+  | "privacy:manage";
 
 const MATRIX: Record<MembershipRole, Permission[]> = {
   ADMIN: [
@@ -37,6 +39,7 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "notes:add",
     "activity:view_all",
     "audit:view",
+    "privacy:manage",
   ],
   SUPERVISOR: [
     "customers:view_all",
