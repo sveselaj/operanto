@@ -6,6 +6,7 @@ import { requireOrg } from "@/lib/org-context";
 import {
   changeMemberRole,
   inviteMember,
+  resendInvitation,
   revokeMemberSessions,
   setMemberStatus,
 } from "@/lib/services/members";
@@ -13,6 +14,8 @@ import {
 export type InviteResult = {
   ok?: boolean;
   error?: string;
+  /** Delivery failed; the invitation still exists and can be resent. */
+  undelivered?: string;
   devInviteUrl?: string;
 };
 
@@ -26,15 +29,25 @@ export async function inviteMemberAction(
   const role = String(formData.get("role") ?? "") as MembershipRole;
   if (!ROLES.includes(role)) return { error: "Invalid role" };
   try {
-    const { devInviteUrl } = await inviteMember(ctx, {
+    const result = await inviteMember(ctx, {
       email: String(formData.get("email") ?? ""),
       role,
     });
     revalidatePath("/settings/users");
-    return { ok: true, devInviteUrl };
+    return {
+      ok: true,
+      undelivered: result.delivered ? undefined : result.reason,
+      devInviteUrl: result.devInviteUrl,
+    };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Invitation failed" };
   }
+}
+
+export async function resendInvitationAction(formData: FormData) {
+  const ctx = await requireOrg();
+  await resendInvitation(ctx, String(formData.get("invitationId") ?? ""));
+  revalidatePath("/settings/users");
 }
 
 export async function changeRoleAction(formData: FormData) {

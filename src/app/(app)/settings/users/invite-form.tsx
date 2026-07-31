@@ -32,12 +32,18 @@ export function InviteForm() {
           {result.error}
         </p>
       ) : null}
-      {result?.ok ? (
-        <p className="text-xs text-success">Invitation created.</p>
+      {result?.ok && !result.undelivered ? (
+        <p className="text-xs text-success">Invitation created and sent.</p>
+      ) : null}
+      {result?.undelivered ? (
+        <p className="text-xs text-warning">
+          Invitation created but NOT delivered: {result.undelivered}. Use
+          “Resend” once email is configured.
+        </p>
       ) : null}
       {result?.devInviteUrl ? (
         <p className="break-all text-xs text-muted-foreground">
-          No email provider configured — share this link manually:{" "}
+          Development preview — share this link manually:{" "}
           {result.devInviteUrl}
         </p>
       ) : null}
