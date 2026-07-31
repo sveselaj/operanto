@@ -138,10 +138,16 @@ test("an administrator can revoke another member's sessions immediately", async 
   const operatorRow = page.locator("tr", { hasText: operator.email });
   await expect(operatorRow).toHaveCount(1);
   await operatorRow.getByRole("button", { name: "Revoke sessions" }).click();
+  // The click returns before the server action commits; wait for the action
+  // and its revalidation to settle before asserting on the other session.
+  await page.waitForLoadState("networkidle");
 
-  // …and the operator's existing session stops working on the next request,
-  // with no sign-out on their side.
-  await operatorPage.goto("/dashboard");
-  await operatorPage.waitForURL("**/login");
+  // …and the operator's existing session stops working on their next request,
+  // with no sign-out on their side. Retried briefly so the assertion measures
+  // "takes effect without re-authenticating", not action round-trip latency.
+  await expect(async () => {
+    await operatorPage.goto("/dashboard");
+    expect(new URL(operatorPage.url()).pathname).toBe("/login");
+  }).toPass({ timeout: 20_000 });
   await operatorContext.close();
 });

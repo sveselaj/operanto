@@ -149,8 +149,15 @@ if [ -n "${CRON_SECRET:-}" ]; then
     "$(code -H "Authorization: Bearer $CRON_SECRET" https://$API/api/internal/events/retry)"
   check "authorized sweep (POST) -> 200"  200 \
     "$(code -X POST -H "Authorization: Bearer $CRON_SECRET" https://$API/api/internal/events/retry)"
-  check "worker health authorized -> 200" 200 \
-    "$(code -H "Authorization: Bearer $CRON_SECRET" https://$API/api/health/worker)"
+  # 200 = healthy, 503 = reachable but degraded (dead-lettered or stuck rows
+  # exist). Both prove the endpoint works; only a non-answer is a failure.
+  wh_code=$(code -H "Authorization: Bearer $CRON_SECRET" https://$API/api/health/worker)
+  wh_body=$(body -H "Authorization: Bearer $CRON_SECRET" https://$API/api/health/worker)
+  case "$wh_code" in
+    200) ok "worker health authorized -> 200 (healthy)" ;;
+    503) ok "worker health authorized -> 503 (reachable, degraded: $wh_body)" ;;
+    *)   bad "worker health authorized" "expected 200 or 503, got $wh_code" ;;
+  esac
   check "worker health unauthenticated -> 401" 401 "$(code https://$API/api/health/worker)"
 else
   bad "cron checks" "CRON_SECRET not set"

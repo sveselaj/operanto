@@ -1,5 +1,115 @@
 # Staging verification record
 
+## Post-DNS staging verification — 2026-07-31, 08:30–08:55 CEST — **PASSED**
+
+**Deployed commit:** `6f44bc023420afdb5265f0ead23e013f10a03aa8` (`6f44bc0`),
+Vercel project `inovativi/operanto`.
+**Tested URLs:** `https://operanto.ai`, `https://www.operanto.ai`,
+`https://staging.operanto.ai`, `https://api-staging.operanto.ai`.
+**Reproduce:** `./scripts/verify-staging.sh` and
+`PLAYWRIGHT_BASE_URL=https://staging.operanto.ai PLAYWRIGHT_API_BASE_URL=https://api-staging.operanto.ai pnpm test:e2e:remote`.
+
+Result: **verify-staging.sh 45/45 PASS**, **Playwright 10/10 PASS** against the
+real hosts.
+
+### 1. DNS
+
+Zone edited at GoDaddy (SOA serial `2026073000` → `2026073005`); `_dmarc`
+preserved. `operanto.ai A 216.150.1.1` (a current Vercel apex target, proven by
+`server: Vercel`); `www`, `staging`, `api-staging` all `CNAME
+cname.vercel-dns.com.`; propagation confirmed via `1.1.1.1` and `8.8.8.8`.
+
+### 2. HTTPS
+
+Certificates presented and verified on all four hosts
+(`CN=operanto.ai` exp. 2026-10-28; `CN=www.operanto.ai`,
+`CN=staging.operanto.ai`, `CN=api-staging.operanto.ai` exp. 2026-10-29).
+Vercel had issued only the apex automatically; the three CNAME hosts required
+an explicit `vercel certs issue` before they served TLS.
+
+### 3–7. Host isolation (all PASS)
+
+| Host | Behaviour |
+|---|---|
+| `operanto.ai` | marketing 200; `/dashboard` 307 → `staging.operanto.ai`; `POST /api/v1/…` **404**; `/api/auth/*` **404**; health 200 |
+| `www.operanto.ai` | **308** → `https://operanto.ai/`, path preserved (`/product` → `/product`) |
+| `staging.operanto.ai` | `/login` 200; `/` → `/dashboard`; `/dashboard` unauthenticated 307 → `/login` |
+| `api-staging.operanto.ai` | `/api/health` + `/api/health/database` 200; `/`, `/dashboard`, `/customers/a.b`, `/invite/tok.en` all **404** — no marketing or cockpit HTML, dotted paths included |
+| forged `X-Forwarded-Host` | cannot reach the ingestion route from the marketing host, nor the cockpit from the API host |
+
+### 8. Authentication on the real staging hostname (all PASS)
+
+Login, sign-out, and callbacks land on `staging.operanto.ai`. Session cookie is
+`__Secure-authjs.session-token`, **HttpOnly**, host-scoped to
+`staging.operanto.ai` (CSRF uses the `__Host-` prefix). Session revocation
+verified twice: through the admin UI in Playwright, and over raw HTTP
+(`/dashboard` 200 with a live session → **307 → /login** immediately after
+`sessionsRevokedAt` was set, with no sign-out on the holder's side).
+
+### 9. Ingestion + cockpit behaviour on the real hosts (all PASS)
+
+202 valid · 200 duplicate · 401 bad signature · 401 expired timestamp ·
+409 wrong source organisation · 413 oversized payload · cross-tenant access
+404 · OPERATOR scoping enforced (with positive controls) · secret rotation
+(old secret 401s after rotation, new secret 202s, audited, plaintext never
+rendered, original restored).
+
+### 10. Cron and worker (all PASS)
+
+Unauthenticated sweep 401; wrong secret 401; authorized sweep 200 on **both**
+GET (as Vercel cron issues it) and POST; worker health 401 unauthenticated and
+200/503 authorized (503 is the correct *degraded* answer while dead-lettered
+rows exist). Dead-letter path exercised end to end on staging: a signed but
+unprojectable event escalated FAILED → DEAD_LETTER, the sweep did **not**
+resurrect it, and the admin Retry re-entered processing with the attempt
+counter reset. `vercel.json` schedules the sweep every 5 minutes; nothing
+depends on exact timing.
+
+### 11. Marketing site (all PASS)
+
+`<link rel="canonical" href="https://operanto.ai">`; Open Graph `title`,
+`description`, `url`, `site_name`, `type` present (no `og:image` is declared
+because none is served); sitemap lists the marketing URLs; `robots.txt` points
+at the sitemap and disallows every cockpit path; no fabricated metrics,
+testimonials or customer claims; Pronatona labelled "First implementation — in
+progress"; sign-in is labelled as leading to staging.
+
+### Defects found and fixed during this verification
+
+1. **`www` did not redirect** — the `vercel.json` host rule never fired; replaced
+   with a platform-level domain redirect (308, path-preserving).
+2. **No canonical or Open Graph metadata** on any marketing page — added.
+3. **Dead-letter off-by-one**: the check compared `attemptCount + 1` against
+   `MAX_ATTEMPTS` although the claim had already incremented the counter, so
+   events parked with one claimable attempt unused (observed on staging:
+   DEAD_LETTER after 4 attempts, not the documented 5). Fixed and unit-tested.
+4. **Harness false PASS**: `openssl` prints `Verify return code: 0` even when no
+   certificate is presented — the check now requires a real subject, which is
+   what exposed that three hosts had no certificate.
+5. Harness claim-regex matched a bare comma in ", customers"; apex check
+   pinned one Vercel IP.
+
+### Explicitly incomplete — not provisioned
+
+- **Shared Upstash Redis** — `/api/health/redis` reports
+  `{"ok":true,"configured":false}`; rate limiting runs on the per-instance
+  in-memory fallback. **Unverified.**
+- **Sentry** — no DSN configured; no error reporting.
+- **Resend invitation email delivery** — no API key; invitation links fall back
+  to the server log.
+
+### Staging data note
+
+Acceptance-test fixtures (`operator@operanto.local`,
+`admin@isolation-test.local`) and per-run probe rows (`E2E Customer *`,
+`Rotation Probe *`, `Staging Probe *`) exist in the staging database because
+the suites run against it. Fixture passwords are random and supplied through
+the environment. Dead-letter artifacts from the operations suite were removed
+after the run so worker health reports healthy. Reset and re-seed without
+`SEED_TEST_USERS` before granting wider staging access.
+
+---
+
 ## Post-DNS verification attempt — 2026-07-30 ~12:50 CEST — **BLOCKED**
 
 **Deployed commit:** `5f04780c45ab24afa8a717f093a8f765dd090fec` (`5f04780`),
