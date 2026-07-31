@@ -109,3 +109,41 @@ jobs:
           pnpm db:seed
           pnpm db:seed
           pnpm prisma migrate status
+
+  integration:
+    name: Privacy and 2FA against a real database
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: operanto_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d operanto_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma migrate deploy
+
+      # Erasure, retention and the second-factor races are all defects in what
+      # SQL actually does concurrently. Against a mocked client these tests pass
+      # on broken code, so they are worth running only against a real database —
+      # a disposable service container, never Neon.
+      - name: Integration tests
+        env:
+          TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/operanto_ci
+        run: pnpm test:integration

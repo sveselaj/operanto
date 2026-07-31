@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireOrg } from "@/lib/org-context";
+import { requireOrgAllowingEnrolment } from "@/lib/org-context";
+import { audit } from "@/lib/audit";
 import {
   beginTwoFactorEnrolment,
   confirmTwoFactorEnrolment,
@@ -17,7 +18,7 @@ export type EnrolmentState = {
 };
 
 export async function beginEnrolmentAction(): Promise<EnrolmentState> {
-  const ctx = await requireOrg();
+  const ctx = await requireOrgAllowingEnrolment();
   try {
     return await beginTwoFactorEnrolment(ctx.user.id);
   } catch (error) {
@@ -29,12 +30,17 @@ export async function confirmEnrolmentAction(
   _prev: EnrolmentState | null,
   formData: FormData,
 ): Promise<EnrolmentState> {
-  const ctx = await requireOrg();
+  const ctx = await requireOrgAllowingEnrolment();
   try {
     const { recoveryCodes } = await confirmTwoFactorEnrolment(
       ctx.user.id,
       String(formData.get("token") ?? ""),
     );
+    await audit(ctx, {
+      eventType: "user.two_factor_enabled",
+      targetType: "User",
+      targetId: ctx.user.id,
+    });
     revalidatePath("/settings/security");
     return { recoveryCodes, done: true };
   } catch (error) {
@@ -46,9 +52,18 @@ export async function disableTwoFactorAction(
   _prev: EnrolmentState | null,
   formData: FormData,
 ): Promise<EnrolmentState> {
-  const ctx = await requireOrg();
+  const ctx = await requireOrgAllowingEnrolment();
   try {
-    await disableTwoFactor(ctx.user.id, String(formData.get("token") ?? ""));
+    await disableTwoFactor(
+      ctx.user.id,
+      String(formData.get("token") ?? ""),
+      ctx.membership.role,
+    );
+    await audit(ctx, {
+      eventType: "user.two_factor_disabled",
+      targetType: "User",
+      targetId: ctx.user.id,
+    });
     revalidatePath("/settings/security");
     return { done: true };
   } catch (error) {

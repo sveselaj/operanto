@@ -14,6 +14,14 @@ const PROD = {
   NEXT_PUBLIC_API_URL: "https://api.operanto.ai",
 };
 
+/** One domain serves everything: local acceptance runs, and any small
+ *  single-domain deployment. */
+const SINGLE_ORIGIN = {
+  NEXT_PUBLIC_SITE_URL: "http://localhost:3000",
+  NEXT_PUBLIC_APP_URL: "http://localhost:3000",
+  NEXT_PUBLIC_API_URL: "http://localhost:3000",
+};
+
 const STAGING = {
   NEXT_PUBLIC_SITE_URL: "https://staging.operanto.ai",
   NEXT_PUBLIC_APP_URL: "https://staging.operanto.ai",
@@ -111,6 +119,31 @@ describe("staging combined-host mode (site == app, separate api)", () => {
     expect(proxy(req("https://x/api/health", "api-staging.operanto.ai")).status).toBe(200);
     expect(proxy(req("https://x/dashboard", "api-staging.operanto.ai")).status).toBe(404);
     expect(proxy(req("https://x/", "api-staging.operanto.ai")).status).toBe(404);
+  });
+});
+
+describe("single-origin mode (site == app == api)", () => {
+  beforeEach(() => stubEnv(SINGLE_ORIGIN));
+
+  it("serves event ingestion, because this host IS the API host", () => {
+    // The app-host branch is reached first when the hosts are equal. Without
+    // an explicit exemption it 404s ingestion and the integration is dead on
+    // a single-domain deployment, with nothing in the logs but a 404.
+    const res = proxy(req("http://localhost:3000/api/v1/integrations/pronatona/events", "localhost:3000"));
+    expect(res.status).toBe(200);
+  });
+
+  it("still serves the cockpit and marketing from the same host", () => {
+    expect(proxy(req("http://localhost:3000/dashboard", "localhost:3000")).status).toBe(200);
+    expect(proxy(req("http://localhost:3000/", "localhost:3000")).status).toBe(200);
+  });
+
+  it("keeps ingestion off a host that is not the API host", () => {
+    // The exemption must be exactly "this host is the API host", not "the
+    // hosts happen to be configured the same".
+    stubEnv({ NEXT_PUBLIC_API_URL: "https://api.operanto.ai" });
+    const res = proxy(req("http://localhost:3000/api/v1/integrations/pronatona/events", "localhost:3000"));
+    expect(res.status).toBe(404);
   });
 });
 

@@ -86,8 +86,12 @@ export function proxy(request: NextRequest) {
   }
 
   if (requestHost === appHost) {
-    // The event-ingestion surface belongs to the API host alone.
-    if (pathname.startsWith("/api/v1/")) {
+    // The event-ingestion surface belongs to the API host alone — unless this
+    // deployment puts the API on the same host, which single-origin setups
+    // (local, and any small deployment with one domain) do. Without the second
+    // clause the host that IS the API host still 404s ingestion, because this
+    // branch is reached first whenever apiHost === appHost.
+    if (pathname.startsWith("/api/v1/") && requestHost !== apiHost) {
       return new NextResponse(null, { status: 404 });
     }
     // Combined-host mode (staging: site == app) serves marketing too;

@@ -137,11 +137,15 @@ export function totpEnrolmentUri(input: {
  * plaintext, stored only as hashes.
  */
 export function generateRecoveryCodes(count = 10): string[] {
+  // 10 bytes = 80 bits. They are stored as unsalted SHA-256 (they must be
+  // looked up by hash), so the entropy has to carry the whole defence: 40 bits
+  // would be brute-forceable offline if the database ever leaked.
   return Array.from({ length: count }, () =>
-    randomBytes(5)
+    randomBytes(10)
       .toString("hex")
       .toUpperCase()
-      .replace(/(.{5})/, "$1-"),
+      .replace(/(.{4})/g, "$1-")
+      .replace(/-$/, ""),
   );
 }
 

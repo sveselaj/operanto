@@ -112,7 +112,17 @@ describe("recovery codes", () => {
     const codes = generateRecoveryCodes();
     expect(codes).toHaveLength(10);
     expect(new Set(codes).size).toBe(10);
-    for (const code of codes) expect(code).toMatch(/^[0-9A-F]{5}-[0-9A-F]{5}$/);
+    for (const code of codes) expect(code).toMatch(/^([0-9A-F]{4}-){4}[0-9A-F]{4}$/);
+  });
+
+  it("carries 80 bits, because the stored hash is unsalted", () => {
+    // These are looked up BY hash, so they cannot be salted, so a leaked
+    // database is an offline brute-force target and the entropy is the only
+    // defence. 20 hex characters = 80 bits. This assertion is the reason the
+    // format may not be shortened for readability.
+    for (const code of generateRecoveryCodes(3)) {
+      expect(normaliseRecoveryCode(code)).toHaveLength(20);
+    }
   });
 
   it("normalises what a user actually types back", () => {
