@@ -74,6 +74,18 @@ model User {
   status            UserStatus @default(INVITED)
   passwordUpdatedAt DateTime?
   sessionsRevokedAt DateTime?
+
+  /// TOTP secret, encrypted at rest with OPERANTO_ENCRYPTION_KEY. Present
+  /// only while enrolment is in progress or 2FA is active.
+  totpSecretEncrypted String?
+  /// Set when the user has proved they can generate a valid code. Until then
+  /// enrolment is incomplete and 2FA is not enforced for them.
+  totpConfirmedAt     DateTime?
+  /// Single-use recovery codes, stored as SHA-256 hashes. Consumed on use.
+  recoveryCodeHashes  String[]  @default([])
+  /// Highest TOTP counter already accepted. Without it a code stays usable
+  /// for its whole ~90 s window and an observed code can be replayed.
+  totpLastCounter     BigInt?
   lastLoginAt       DateTime?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt

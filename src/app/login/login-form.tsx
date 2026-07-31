@@ -4,10 +4,13 @@ import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { loginAction } from "./actions";
+import { loginAction, type LoginState } from "./actions";
 
 export function LoginForm() {
-  const [error, formAction, pending] = useActionState(loginAction, null);
+  const [state, formAction, pending] = useActionState<LoginState | null, FormData>(
+    loginAction,
+    null,
+  );
 
   return (
     <form action={formAction} className="space-y-4">
@@ -25,9 +28,26 @@ export function LoginForm() {
           required
         />
       </div>
-      {error ? (
+      {state?.needsToken ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="token">Authentication code</Label>
+          <Input
+            id="token"
+            name="token"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            autoFocus
+            placeholder="6-digit code or recovery code"
+            required
+          />
+          <p className="text-xs text-muted-foreground">
+            From your authenticator app. A recovery code also works.
+          </p>
+        </div>
+      ) : null}
+      {state?.error ? (
         <p role="alert" className="text-sm text-danger">
-          {error}
+          {state.error}
         </p>
       ) : null}
       <Button type="submit" className="w-full" disabled={pending}>

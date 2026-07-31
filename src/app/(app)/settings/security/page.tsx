@@ -4,11 +4,18 @@ import { requireOrg } from "@/lib/org-context";
 import { PageHeader } from "@/components/app/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChangePasswordForm } from "./change-password-form";
+import { TwoFactorPanel } from "./two-factor-panel";
+import {
+  roleRequiresTwoFactor,
+  twoFactorStatus,
+} from "@/lib/services/two-factor";
 
 export const metadata: Metadata = { title: "Security" };
 
 export default async function SecuritySettingsPage() {
   const ctx = await requireOrg();
+  const status = await twoFactorStatus(ctx.user.id);
+  const required = roleRequiresTwoFactor(ctx.membership.role);
 
   return (
     <>
@@ -25,6 +32,26 @@ export default async function SecuritySettingsPage() {
       </PageHeader>
 
       <div className="grid max-w-4xl gap-4 lg:grid-cols-2">
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">
+              Two-factor authentication
+              {required ? (
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  required for {ctx.membership.role}
+                </span>
+              ) : null}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <TwoFactorPanel
+              active={status.active}
+              required={required}
+              recoveryCodesRemaining={status.recoveryCodesRemaining}
+            />
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Change password</CardTitle>
@@ -58,6 +85,11 @@ export default async function SecuritySettingsPage() {
                 page.
               </li>
               <li>All sensitive actions are recorded in the audit log.</li>
+              <li>
+                Administrators and supervisors must use two-factor
+                authentication; they can read every customer in the
+                organisation.
+              </li>
             </ul>
           </CardContent>
         </Card>

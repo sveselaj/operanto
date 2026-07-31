@@ -34,6 +34,7 @@ const COCKPIT_PREFIXES = [
   "/audit",
   "/login",
   "/invite",
+  "/two-factor",
 ];
 
 function hostOf(url: string | undefined): string | null {

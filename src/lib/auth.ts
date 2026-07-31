@@ -4,10 +4,13 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { clientIp, identifierKey, rateLimit } from "@/lib/rate-limit";
+import { verifySecondFactor } from "@/lib/services/two-factor";
 
 const credentialsSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1).max(128),
+  /** TOTP or recovery code; only required once 2FA is active. */
+  token: z.string().max(64).optional(),
 });
 
 // Compared against when the user does not exist, so unknown-account and
@@ -30,6 +33,18 @@ class AuthUnavailableError extends CredentialsSignin {
   code = "temporarily_unavailable";
 }
 
+/**
+ * The password was correct but a second factor is needed. Raised only AFTER
+ * the password check, so it never reveals whether an account exists.
+ */
+class TwoFactorRequiredError extends CredentialsSignin {
+  code = "totp_required";
+}
+
+class TwoFactorInvalidError extends CredentialsSignin {
+  code = "totp_invalid";
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },
   pages: { signIn: "/login" },
@@ -39,6 +54,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
+        token: { label: "Authentication code", type: "text" },
       },
       authorize: async (raw, request) => {
         const parsed = credentialsSchema.safeParse(raw);
@@ -76,6 +92,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         );
         if (!user?.passwordHash || !ok) return null;
         if (user.status !== "ACTIVE") return null;
+
+        // Second factor, once the account has one. Distinct errors so the form
+        // can ask for a code, but only reachable with a correct password.
+        if (user.totpConfirmedAt) {
+          const token = parsed.data.token?.trim();
+          if (!token) throw new TwoFactorRequiredError();
+          const secondFactorOk = await verifySecondFactor(user.id, token);
+          if (!secondFactorOk) throw new TwoFactorInvalidError();
+        }
 
         const activeMembership = await prisma.membership.findFirst({
           where: {
