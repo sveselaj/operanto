@@ -39,9 +39,11 @@ SELECT id FROM "Customer"
 WHERE name LIKE 'E2E Customer %'
    OR name LIKE 'Rotation Probe %'
    OR name LIKE 'Staging Probe %'
+   OR name LIKE 'Post-Merge Probe%'
    OR email LIKE 'e2e.%@example.com'
    OR email LIKE 'rot.%@example.com'
    OR email LIKE 'probe.%@example.com'
+   OR email = 'postmerge@example.com'
    OR email IN ('arlinda.berisha@example.com', 'blerim.gashi@example.com');
 
 DELETE FROM "Opportunity"
@@ -49,7 +51,8 @@ WHERE "customerId" IN (SELECT id FROM fixture_customers)
    OR "sourceOpportunityId" LIKE 'lead_e2e_%'
    OR "sourceOpportunityId" LIKE 'lead_rot_%'
    OR "sourceOpportunityId" LIKE 'lead_evt_stg_%'
-   OR "sourceOpportunityId" LIKE 'lead_missing_%';
+   OR "sourceOpportunityId" LIKE 'lead_missing_%'
+   OR "sourceOpportunityId" LIKE 'lead_evt_postmerge_%';
 
 DELETE FROM "Customer" WHERE id IN (SELECT id FROM fixture_customers);
 
@@ -57,6 +60,7 @@ DELETE FROM "Customer" WHERE id IN (SELECT id FROM fixture_customers);
 DELETE FROM "PropertyContext"
 WHERE "referenceCode" LIKE 'PRN-E2E-%'
    OR "referenceCode" LIKE 'PRN-STG-%'
+   OR "referenceCode" LIKE 'PRN-PM-%'
    OR "sourcePropertyId" LIKE 'prop_lead_%'
    OR "sourcePropertyId" LIKE 'prop_local_%';
 
@@ -68,6 +72,7 @@ WHERE "eventId" LIKE 'evt_stg_%'
    OR "eventId" LIKE 'evt_old_%'
    OR "eventId" LIKE 'evt_org_%'
    OR "eventId" LIKE 'evt_big_%'
+   OR "eventId" LIKE 'evt_postmerge_%'
    OR "rawPayload"->'data'->>'leadId' LIKE 'lead_e2e_%'
    OR "rawPayload"->'data'->>'leadId' LIKE 'lead_rot_%'
    OR "rawPayload"->'data'->>'leadId' LIKE 'lead_missing_%';

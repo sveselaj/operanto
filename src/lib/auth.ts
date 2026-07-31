@@ -3,7 +3,7 @@ import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { rateLimit } from "@/lib/rate-limit";
+import { clientIp, identifierKey, rateLimit } from "@/lib/rate-limit";
 
 const credentialsSchema = z.object({
   email: z.string().email(),
@@ -19,6 +19,17 @@ class TooManyAttemptsError extends CredentialsSignin {
   code = "too_many_attempts";
 }
 
+/**
+ * The shared rate-limit backend is configured but unreachable, so sign-in is
+ * refused rather than degraded (see rate-limit.ts). Deliberately distinct from
+ * "too many attempts" so an outage is not mistaken for an attack — and raised
+ * BEFORE any account lookup, so it reveals nothing about whether the account
+ * exists.
+ */
+class AuthUnavailableError extends CredentialsSignin {
+  code = "temporarily_unavailable";
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },
   pages: { signIn: "/login" },
@@ -29,13 +40,32 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      authorize: async (raw) => {
+      authorize: async (raw, request) => {
         const parsed = credentialsSchema.safeParse(raw);
         if (!parsed.success) return null;
         const email = parsed.data.email.toLowerCase();
 
-        const perAccount = await rateLimit(`login:acct:${email}`, 10, 15 * 60_000);
-        if (!perAccount.allowed) throw new TooManyAttemptsError();
+        // Both limits are evaluated before the account is looked up, so
+        // neither a lockout nor an outage can be used to probe for users.
+        const ip = clientIp(request.headers);
+        const perIp = await rateLimit(
+          `login:ip:${identifierKey(ip)}`,
+          40,
+          15 * 60_000,
+          { sensitive: true },
+        );
+        const perAccount = await rateLimit(
+          `login:acct:${identifierKey(email)}`,
+          10,
+          15 * 60_000,
+          { sensitive: true },
+        );
+        for (const verdict of [perIp, perAccount]) {
+          if (verdict.backend === "denied-fail-closed") {
+            throw new AuthUnavailableError();
+          }
+          if (!verdict.allowed) throw new TooManyAttemptsError();
+        }
 
         const user = await prisma.user.findUnique({ where: { email } });
 

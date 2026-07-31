@@ -2,7 +2,7 @@ import { NextResponse, after } from "next/server";
 import type { Integration, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret, safeEqual, signEventPayload } from "@/lib/crypto";
-import { clientIp, rateLimit } from "@/lib/rate-limit";
+import { clientIp, identifierKey, rateLimit } from "@/lib/rate-limit";
 import {
   MAX_EVENT_BODY_BYTES,
   REPLAY_WINDOW_SECONDS,
@@ -27,7 +27,7 @@ const err = (status: number, code: string) =>
 
 export async function POST(req: Request) {
   const ip = clientIp(req.headers);
-  const limit = await rateLimit(`ingest:${ip}`, 240, 60_000);
+  const limit = await rateLimit(`ingest:ip:${identifierKey(ip)}`, 240, 60_000);
   if (!limit.allowed) return err(429, "rate_limited");
 
   const declaredLength = Number(req.headers.get("content-length") ?? 0);

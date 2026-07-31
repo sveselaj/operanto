@@ -44,8 +44,12 @@ assignment checks.
 
 ## Known limitations (accepted for MVP, tracked)
 
-- Rate limiting is per-instance in-memory unless `UPSTASH_REDIS_REST_URL` is
-  configured; fine for single-instance deployments.
+- Rate limiting is per-instance in-memory unless the Upstash REST pair
+  (`UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`) is configured —
+  the only supported convention. When it IS configured but unreachable,
+  authentication and invitation limits **fail closed** (deny) while event
+  ingestion falls back to memory; see `docs/production-activation.md` for the
+  per-limit table and rationale.
 - No 2FA yet; mitigate with strong passwords + instant revocation.
 - CSP allows `'unsafe-inline'` scripts (Next.js bootstrap); nonce-based CSP is
   a follow-up.

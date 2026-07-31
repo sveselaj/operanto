@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { acceptInvitation } from "@/lib/services/members";
-import { rateLimit, clientIp } from "@/lib/rate-limit";
+import { clientIp, identifierKey, rateLimit } from "@/lib/rate-limit";
 import { headers } from "next/headers";
 
 export async function acceptInvitationAction(
@@ -11,7 +11,17 @@ export async function acceptInvitationAction(
   formData: FormData,
 ): Promise<string | null> {
   const ip = clientIp(await headers());
-  const limit = await rateLimit(`invite:${ip}`, 10, 15 * 60_000);
+  const limit = await rateLimit(
+    `invite:ip:${identifierKey(ip)}`,
+    10,
+    15 * 60_000,
+    { sensitive: true },
+  );
+  if (limit.backend === "denied-fail-closed") {
+    // Shared backend down: refuse rather than degrade, with a message that
+    // says nothing about whether this invitation exists.
+    return "This service is temporarily unavailable. Please try again shortly.";
+  }
   if (!limit.allowed) return "Too many attempts. Try again later.";
 
   const parsed = z
