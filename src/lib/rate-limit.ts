@@ -1,4 +1,5 @@
 import "server-only";
+import { createHmac } from "node:crypto";
 
 /**
  * Fixed-window rate limiter.
@@ -18,6 +19,19 @@ import "server-only";
  * (fail-closed). Authentication and invitation limits are sensitive: an
  * attacker who can knock Redis over must not thereby gain unlimited password
  * guesses.
+ *
+ * Counters in use — all fixed-window, all expiring with the window:
+ *
+ * | Key                    | Identifier        | Limit | Window | On outage   |
+ * |------------------------|-------------------|-------|--------|-------------|
+ * | `login:acct:<hash>`    | HMAC(email)       | 10    | 15 min | fail closed |
+ * | `login:ip:<hash>`      | HMAC(client IP)   | 40    | 15 min | fail closed |
+ * | `invite:ip:<hash>`     | HMAC(client IP)   | 10    | 15 min | fail closed |
+ * | `ingest:ip:<hash>`     | HMAC(client IP)   | 240   | 1 min  | memory      |
+ *
+ * Identifiers are pseudonymised with `identifierKey()` — no raw email, IP,
+ * password, token or signature is ever part of a key. Redis expiry is set to
+ * the window length on every INCR, so counters cannot outlive their window.
  */
 
 type Verdict = {
@@ -26,6 +40,23 @@ type Verdict = {
   /** Which backend produced the verdict — surfaced for operational logging. */
   backend: "redis" | "memory" | "denied-fail-closed";
 };
+
+/**
+ * Pseudonymise an identifier before it becomes part of a key.
+ *
+ * Redis keys are visible to anyone with console access and appear in slow-log
+ * and monitoring output, so raw email addresses (and IPs) must not be written
+ * there. The hash is keyed with AUTH_SECRET so the values are not reversible
+ * with a dictionary of candidate addresses; a rotated AUTH_SECRET simply
+ * starts a fresh set of counters, which is harmless.
+ */
+export function identifierKey(value: string): string {
+  const secret = process.env.AUTH_SECRET ?? "operanto-dev-fallback";
+  return createHmac("sha256", secret)
+    .update(value.trim().toLowerCase())
+    .digest("hex")
+    .slice(0, 32);
+}
 
 type Options = {
   /**

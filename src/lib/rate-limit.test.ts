@@ -99,3 +99,34 @@ describe("with Redis configured", () => {
     ).toBe("denied-fail-closed");
   });
 });
+
+describe("identifierKey", () => {
+  beforeEach(() => vi.stubEnv("AUTH_SECRET", "test-secret"));
+
+  it("never exposes the raw identifier", async () => {
+    const { identifierKey } = await import("@/lib/rate-limit");
+    const key = identifierKey("Person@Example.COM");
+    expect(key).not.toContain("Person");
+    expect(key).not.toContain("example.com");
+    expect(key).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("is stable and case/whitespace insensitive", async () => {
+    const { identifierKey } = await import("@/lib/rate-limit");
+    expect(identifierKey(" Person@Example.com ")).toBe(
+      identifierKey("person@example.com"),
+    );
+  });
+
+  it("separates different identifiers", async () => {
+    const { identifierKey } = await import("@/lib/rate-limit");
+    expect(identifierKey("a@example.com")).not.toBe(identifierKey("b@example.com"));
+  });
+
+  it("is keyed by AUTH_SECRET, so counters are not dictionary-reversible", async () => {
+    const { identifierKey } = await import("@/lib/rate-limit");
+    const withFirst = identifierKey("person@example.com");
+    vi.stubEnv("AUTH_SECRET", "a-different-secret");
+    expect(identifierKey("person@example.com")).not.toBe(withFirst);
+  });
+});

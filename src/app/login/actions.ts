@@ -16,11 +16,19 @@ export async function loginAction(
     return null;
   } catch (error) {
     if (error instanceof AuthError) {
-      return error.type === "CredentialsSignin" &&
-        "code" in error &&
-        (error as { code?: string }).code === "too_many_attempts"
-        ? "Too many attempts. Try again in a few minutes."
-        : "Invalid email or password.";
+      const code =
+        error.type === "CredentialsSignin" && "code" in error
+          ? (error as { code?: string }).code
+          : undefined;
+      if (code === "too_many_attempts") {
+        return "Too many attempts. Try again in a few minutes.";
+      }
+      if (code === "temporarily_unavailable") {
+        // Generic by design: says nothing about the account, only that we
+        // cannot safely authenticate right now.
+        return "Sign-in is temporarily unavailable. Please try again shortly.";
+      }
+      return "Invalid email or password.";
     }
     throw error; // NEXT_REDIRECT on success
   }
