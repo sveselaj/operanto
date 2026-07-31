@@ -1,5 +1,83 @@
 # Staging verification record
 
+## Controlled merge and post-merge verification — 2026-07-31, 09:10–09:30 CEST
+
+### Merge hashes
+
+| Repository | PR | Merge commit | Method |
+|---|---|---|---|
+| `sveselaj/operanto` | #1 | **`eda28096f34b9a347d1c8afd8596d6856882facf`** | merge commit (no squash — migration and security history preserved; 26 commits on `main`) |
+| `sveselaj/pronatona` | #1 | **`5ae3350b75f6855a27d66dc52c6a7c5485d98d48`** | merge commit (no squash) |
+
+Branch tips merged: Operanto `78215c7`, Pronatona `514e136`.
+
+### Pre-merge gate
+
+Neither repository has GitHub Actions; the only automated PR checks are
+Vercel's deployment checks, which passed on both. The gate below was therefore
+run locally against the exact final commits, and adding CI is recorded as a
+follow-up blocker.
+
+| Repository | Commit | lint | typecheck | unit | build |
+|---|---|---|---|---|---|
+| operanto | `78215c7` | ✓ | ✓ | 50 ✓ | ✓ |
+| pronatona | `514e136` | ✓ | ✓ | 87 ✓ | ✓ |
+
+Re-verified from `main` after merge: operanto `eda2809` (50 ✓, build ✓),
+pronatona `5ae3350` (87 ✓, build ✓).
+
+### Staging redeployment
+
+Redeployed from `main`: production deployment `operanto-6z3n3gp6h`, aliased to
+`operanto.ai`. Pronatona auto-deployed from `main`
+(`pronatona-pcowlck6m`); `https://pronatona.com/sq` returns 200 and
+`POST /api/internal/outbox/dispatch` returns **401** unauthenticated.
+
+### Operanto migration status
+
+`prisma migrate status` → **"Database schema is up to date!"** No pending
+migrations; nothing applied during the merge (the baseline was already
+deployed during staging verification).
+
+### Pronatona migration status
+
+`20260730120000_outbox_delivery_state` applied to the Pronatona production
+database with `prisma migrate deploy` (additive only). A full logical backup
+was taken first — 76 KB, SHA-256
+`f28382dbc384ce3b5ad2e864f8741ffc88ce764ea40bfab79c97425f6edfc3ae`.
+
+Verification: `OutboxEvent` rows **49 → 49** (unchanged), new columns
+`nextAttemptAt` / `lastAttemptAt` / `deadLetteredAt` present, index
+`OutboxEvent_processedAt_deadLetteredAt_nextAttemptAt_idx` created, delivered
+events **0**, `Lead` 16 and `Property` 6 intact, `migrate status` → up to date.
+
+### Production dispatch remains disabled
+
+No `OPERANTO_*` variables exist in the Pronatona `.env` **or** in the
+Pronatona Vercel production environment, so `isOperantoConfigured()` returns
+false and the dispatcher is a no-op. The cutoff additionally fails closed, so
+even a partial configuration would hold rather than release the backlog.
+
+### Post-merge staging smoke test
+
+| Check | Result |
+|---|---|
+| `verify-staging.sh` (45 checks) | **45/45 PASS** — marketing, www 308, cockpit host, API-host isolation, forged host headers, ingestion matrix, cron, marketing metadata |
+| Acceptance suite against real hosts | **10/10 PASS** |
+| Controlled fictional event (`evt_postmerge_*`) | 202 accepted → PROCESSED |
+| Duplicate replay | 200 `duplicate:true`, projection counts unchanged (1 customer, no extra rows) |
+| Cross-tenant access | 404 for a foreign organisation's admin |
+| OPERATOR scoping | unassigned opportunity absent from list and 404 by direct URL |
+| Health endpoints | `/api/health`, `/api/health/database` 200; `/api/health/redis` `configured:false`; `/api/health/worker` 401 unauthenticated |
+| Production Pronatona delivery | **inactive** — verified above |
+
+Probe and fixture rows created by this smoke test were removed afterwards with
+`scripts/clean-staging-fixtures.sql`; the staging database is back to
+1 organisation, 1 user, 1 membership, 1 integration, 0 customers/opportunities/
+events/tasks/activities and 19 audit rows.
+
+---
+
 ## Staging database cleanup before wider access — 2026-07-31, 09:05 CEST
 
 **Backup taken first:** logical dump of the staging database with a matching
