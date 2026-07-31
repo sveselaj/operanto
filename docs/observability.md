@@ -33,26 +33,43 @@ Wired in at event-processing failure and dead-letter creation
 (`src/lib/events/process.ts`), with only safe correlation handles as tags:
 event type, event id, attempt count, organisation id.
 
-### Owner steps once DSNs exist
+### Wired and verified (2026-07-31)
 
-1. Create **two** Sentry projects: `operanto-staging` and `operanto-production`.
-2. Install the SDK: `pnpm add @sentry/nextjs`.
-3. Implement `sendToSentry()` in `src/lib/observability.ts` — it is the single
-   hand-off point and already receives a fully scrubbed payload.
-4. For browser capture, add the Next.js SDK config files and set
-   `NEXT_PUBLIC_SENTRY_DSN`. Keep `sendDefaultPii: false`, and add a
-   `beforeSend` that drops `request.data`, `request.cookies` and
-   `request.headers.authorization` — defence in depth behind `scrub()`.
-5. Set `SENTRY_DSN`, `SENTRY_ENVIRONMENT` and `SENTRY_RELEASE` per environment.
-   On Vercel, `VERCEL_GIT_COMMIT_SHA` already provides the release.
-6. Verify with the admin-only test error below, in staging first.
+`@sentry/nextjs` is installed and initialised for all three runtimes:
+
+- `instrumentation.ts` — server and edge (`register()` plus
+  `onRequestError = Sentry.captureRequestError`)
+- `instrumentation-client.ts` — browser, with replay sampling at 0
+- `src/lib/sentry-options.ts` — shared options; `sendDefaultPii: false`,
+  `tracesSampleRate: 0`, and a `beforeSend` that deletes `request.data`,
+  `request.cookies`, the `authorization` / `cookie` /
+  `x-operanto-signature` headers and the query string, reduces `user` to an
+  id, and passes `extra` and `contexts` through `scrub()`
+- `src/lib/scrub.ts` — runtime-neutral, so the browser SDK scrubs by exactly
+  the same rules as the server (it cannot import `server-only`)
+
+`Sentry.init` is a no-op without a DSN, so local development and CI need no
+credentials.
+
+**Verified end to end** against the `inovativi/operanto` project: a test error
+raised through the real Next runtime was accepted by the reporter
+(`reportingConfigured: true`, no SDK errors), and the values deliberately
+planted in the payload (`should-not-appear@example.com`,
+`should-not-appear`) appeared **nowhere** in the output — only `[pii]` and
+`[redacted]` masks. Confirm the issue itself in Sentry → Issues.
+
+Staging currently points at the single existing project with
+`SENTRY_ENVIRONMENT=staging`. **Create a second project before production**
+so staging noise cannot mask production alerts, and set the production DSN
+separately.
 
 ### Safe test-error mechanism
 
-Not yet implemented. When added it must be: `POST /api/internal/test-error`,
-guarded by `CRON_SECRET` (like the other internal routes) **and** refused when
-`NODE_ENV === "production"` unless an explicit `ALLOW_TEST_ERROR=1` is set —
-so a curious request can never manufacture production alerts.
+`POST /api/internal/test-error`, implemented. Two locks: it requires
+`CRON_SECRET` like the other internal routes, and it refuses in production
+unless `ALLOW_TEST_ERROR=1` is set explicitly — so a leaked secret alone
+cannot manufacture production alerts. Verified: 401 unauthenticated, 403 in a
+production-mode process without the override, and a scrubbed report with it.
 
 ### Alert recommendations
 
