@@ -1,8 +1,8 @@
 # Observability and email — preparation
 
-Neither Sentry nor Resend is provisioned. Both boundaries exist in code, are
-unit-tested, and no-op safely without credentials, so local development and CI
-need none. This document is what the owner executes once credentials exist.
+Sentry is wired and verified; Resend is prepared but not provisioned. Both
+boundaries are unit-tested and no-op safely without credentials, so local
+development and CI need none.
 
 ## Sentry
 
