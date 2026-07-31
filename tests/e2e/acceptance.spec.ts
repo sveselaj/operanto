@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   adminCredentials,
+  apiBase,
   buildLeadCreatedEnvelope,
   FOREIGN_ADMIN,
   login,
@@ -73,10 +74,12 @@ test.describe.serial("decisive journey", () => {
     expect(foreignOrg.status()).toBe(409);
 
     // The retry cron requires authentication…
-    const unauthenticated = await request.post("/api/internal/events/retry");
+    const unauthenticated = await request.post(
+      `${apiBase()}/api/internal/events/retry`,
+    );
     expect(unauthenticated.status()).toBe(401);
     const unauthenticatedStatus = await request.get(
-      "/api/internal/events/status?eventId=x",
+      `${apiBase()}/api/internal/events/status?eventId=x`,
     );
     expect(unauthenticatedStatus.status()).toBe(401);
 
@@ -134,7 +137,7 @@ test.describe.serial("decisive journey", () => {
   }) => {
     // Authoritative check: this event's own row says PROCESSED.
     const status = await request.get(
-      `/api/internal/events/status?eventId=${encodeURIComponent(String(envelope.eventId))}`,
+      `${apiBase()}/api/internal/events/status?eventId=${encodeURIComponent(String(envelope.eventId))}`,
       { headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } },
     );
     expect(await status.json()).toMatchObject({

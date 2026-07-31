@@ -102,14 +102,29 @@ describe("processInboundEvent", () => {
 
     vi.clearAllMocks();
     prismaMock.inboundEvent.updateMany.mockResolvedValue({ count: 1 });
+    // The claim has already incremented the counter, so a row that comes back
+    // with attemptCount === MAX_ATTEMPTS has just used its last attempt.
     prismaMock.inboundEvent.findUniqueOrThrow.mockResolvedValue({
       ...EVENT,
-      attemptCount: MAX_ATTEMPTS - 1,
+      attemptCount: MAX_ATTEMPTS,
     });
     handleEventMock.mockRejectedValue(new Error("boom"));
     expect(await processInboundEvent("ie_1")).toBe("dead_letter");
     update = prismaMock.inboundEvent.update.mock.calls.at(-1)?.[0];
     expect(update.data.processingStatus).toBe("DEAD_LETTER");
+  });
+});
+
+describe("attempt accounting", () => {
+  it("uses every claimable attempt before dead-lettering", async () => {
+    // attemptCount = MAX_ATTEMPTS - 1 still has one attempt left…
+    prismaMock.inboundEvent.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.inboundEvent.findUniqueOrThrow.mockResolvedValue({
+      ...EVENT,
+      attemptCount: MAX_ATTEMPTS - 1,
+    });
+    handleEventMock.mockRejectedValue(new Error("boom"));
+    expect(await processInboundEvent("ie_1")).toBe("failed");
   });
 });
 

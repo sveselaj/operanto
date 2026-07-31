@@ -3,6 +3,23 @@ import type { APIRequestContext, Page } from "@playwright/test";
 
 export const EVENTS_PATH = "/api/v1/integrations/pronatona/events";
 
+/**
+ * The ingestion and scheduler surfaces live on the API host, which is a
+ * different origin from the cockpit in deployed environments. Locally a single
+ * origin serves everything, so this falls back to the page base URL.
+ */
+export function apiBase(): string {
+  return (
+    process.env.PLAYWRIGHT_API_BASE_URL ??
+    process.env.PLAYWRIGHT_BASE_URL ??
+    "http://localhost:3000"
+  );
+}
+
+function apiUrl(path: string): string {
+  return `${apiBase().replace(/\/$/, "")}${path}`;
+}
+
 export function webhookSecret(): string {
   const secret = process.env.PRONATONA_WEBHOOK_SECRET;
   if (!secret) throw new Error("PRONATONA_WEBHOOK_SECRET missing in env");
@@ -73,7 +90,7 @@ export async function postSignedEvent(
   const signature = createHmac("sha256", options.secret ?? webhookSecret())
     .update(`${timestamp}.${rawBody}`)
     .digest("hex");
-  return request.post(EVENTS_PATH, {
+  return request.post(apiUrl(EVENTS_PATH), {
     headers: {
       "Content-Type": "application/json",
       "X-Operanto-Event-Id": String(envelope.eventId),
@@ -103,7 +120,7 @@ export async function waitForEventProcessed(
   let lastStatus = "unknown";
   for (let attempt = 0; attempt < 20; attempt++) {
     const res = await request.get(
-      `/api/internal/events/status?eventId=${encodeURIComponent(eventId)}`,
+      apiUrl(`/api/internal/events/status?eventId=${encodeURIComponent(eventId)}`),
       { headers: auth },
     );
     if (res.ok()) {
@@ -118,7 +135,7 @@ export async function waitForEventProcessed(
       }
     }
     // Nudge the real sweep, then wait before re-checking.
-    await request.post("/api/internal/events/retry", { headers: auth });
+    await request.post(apiUrl("/api/internal/events/retry"), { headers: auth });
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   throw new Error(`event ${eventId} not processed (last status: ${lastStatus})`);
@@ -128,7 +145,7 @@ export async function waitForEventProcessed(
 export async function workerHealth(request: APIRequestContext) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) throw new Error("CRON_SECRET missing in env");
-  const res = await request.get("/api/health/worker", {
+  const res = await request.get(apiUrl("/api/health/worker"), {
     headers: { Authorization: `Bearer ${cronSecret}` },
   });
   return (await res.json()) as {

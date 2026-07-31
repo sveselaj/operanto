@@ -84,7 +84,11 @@ export async function processInboundEvent(
     return result.outcome === "ignored" ? "ignored" : "processed";
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const isFinal = event.attemptCount + 1 >= MAX_ATTEMPTS;
+    // `attemptCount` was already incremented by the claim above, and the claim
+    // gate is `attemptCount < MAX_ATTEMPTS`. So the event is out of attempts
+    // exactly when the counter has reached MAX_ATTEMPTS — comparing against
+    // attemptCount + 1 here would park it with one claimable attempt unused.
+    const isFinal = event.attemptCount >= MAX_ATTEMPTS;
     await prisma.$transaction([
       prisma.inboundEvent.update({
         where: { id: event.id },
