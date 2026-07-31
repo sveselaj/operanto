@@ -40,10 +40,12 @@ WHERE name LIKE 'E2E Customer %'
    OR name LIKE 'Rotation Probe %'
    OR name LIKE 'Staging Probe %'
    OR name LIKE 'Post-Merge Probe%'
+   OR name LIKE 'Redis Outage Probe%'
    OR email LIKE 'e2e.%@example.com'
    OR email LIKE 'rot.%@example.com'
    OR email LIKE 'probe.%@example.com'
    OR email = 'postmerge@example.com'
+   OR email = 'redisdown@example.com'
    OR email IN ('arlinda.berisha@example.com', 'blerim.gashi@example.com');
 
 DELETE FROM "Opportunity"
@@ -52,7 +54,8 @@ WHERE "customerId" IN (SELECT id FROM fixture_customers)
    OR "sourceOpportunityId" LIKE 'lead_rot_%'
    OR "sourceOpportunityId" LIKE 'lead_evt_stg_%'
    OR "sourceOpportunityId" LIKE 'lead_missing_%'
-   OR "sourceOpportunityId" LIKE 'lead_evt_postmerge_%';
+   OR "sourceOpportunityId" LIKE 'lead_evt_postmerge_%'
+   OR "sourceOpportunityId" LIKE 'lead_evt_redisdown_%';
 
 DELETE FROM "Customer" WHERE id IN (SELECT id FROM fixture_customers);
 
@@ -61,6 +64,7 @@ DELETE FROM "PropertyContext"
 WHERE "referenceCode" LIKE 'PRN-E2E-%'
    OR "referenceCode" LIKE 'PRN-STG-%'
    OR "referenceCode" LIKE 'PRN-PM-%'
+   OR "referenceCode" LIKE 'PRN-RD-%'
    OR "sourcePropertyId" LIKE 'prop_lead_%'
    OR "sourcePropertyId" LIKE 'prop_local_%';
 
@@ -73,6 +77,7 @@ WHERE "eventId" LIKE 'evt_stg_%'
    OR "eventId" LIKE 'evt_org_%'
    OR "eventId" LIKE 'evt_big_%'
    OR "eventId" LIKE 'evt_postmerge_%'
+   OR "eventId" LIKE 'evt_redisdown_%'
    OR "rawPayload"->'data'->>'leadId' LIKE 'lead_e2e_%'
    OR "rawPayload"->'data'->>'leadId' LIKE 'lead_rot_%'
    OR "rawPayload"->'data'->>'leadId' LIKE 'lead_missing_%';
@@ -85,6 +90,11 @@ WHERE (m."operantoEntityType" = 'opportunity'
        AND NOT EXISTS (SELECT 1 FROM "PropertyContext" p WHERE p.id = m."operantoEntityId"))
    OR (m."operantoEntityType" = 'membership'
        AND NOT EXISTS (SELECT 1 FROM "Membership" ms WHERE ms.id = m."operantoEntityId"));
+
+-- Invitations created by verification probes.
+DELETE FROM "Invitation"
+WHERE email LIKE 'outage-probe-%@example.com'
+   OR email = 'delivery-check@example.com';
 
 -- Audit rows whose target no longer exists (integration events for deleted
 -- InboundEvent rows). Staff-action audit history is untouched.

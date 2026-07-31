@@ -116,56 +116,45 @@ removed with `scripts/clean-staging-fixtures.sql`.
 
 ---
 
-## Upstash staging provisioning — checklist (owner action pending)
+## Upstash staging — provisioned and VERIFIED (2026-07-31, 12:10–12:35 CEST)
 
-The staging Upstash database exists (`amused-firefly-67823.upstash.io`,
-eu-central-1, created 2026-07-31) and `UPSTASH_REDIS_REST_URL` is set locally.
-**`UPSTASH_REDIS_REST_TOKEN` is still missing** — it was masked in the console
-screenshot, so nothing has been configured in Vercel and Redis remains
-unverified.
+Database `amused-firefly-67823.upstash.io` (AWS eu-central-1), configured in
+the Operanto **staging** environment only. Convention:
+`UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` — the only pair any code
+path reads.
 
-### Environment-variable convention — one only
+| # | Check | Result |
+|---|---|---|
+| 1 | Credentials work | `PING` → `PONG`; `INCR`/`EXPIRE`/`GET` round-trip returns `1`,`1`,`"1"` |
+| 2 | Health endpoint | `{"ok":true,"configured":true,"latencyMs":137}` |
+| 3 | No credential leakage | zero occurrences of the host or token in the response body |
+| 4 | Counters are shared, not per-instance | 12 failed logins for one account, **each from a fresh client session**: attempts 1–10 `credentials`, attempt **11** flips to `too_many_attempts` |
+| 5 | Counters live in Redis | keys `rl:login:acct:<hash>:<window>` and `rl:login:ip:<hash>:<window>`, both `count=12`, `ttl=868s` (< the 900 s window) |
+| 6 | Identifiers pseudonymised | no `@`, no email, no IP in any key — only HMAC hashes |
+| 7 | Per-IP policy independent | 30 further attempts against **distinct accounts** from one IP: attempt **41** trips `too_many_attempts` (limit 40), so per-account cannot be the cause |
+| 8 | Login fails CLOSED on outage | URL repointed to an unreachable host + redeploy: `/api/health/redis` → `{"ok":false,"configured":true}`; **valid administrator credentials** refused with `code=temporarily_unavailable`, dashboard 307 |
+| 9 | Invitation acceptance fails CLOSED | live invitation, real form submission → "This service is temporarily unavailable", no account created, still on `/invite/…` |
+| 10 | Signed ingestion survives the outage | `POST /api/v1/…/events` → **202** while Redis was unreachable; the event later reached `PROCESSED` |
+| 11 | Recovery without DB intervention | URL restored + redeploy → health `ok:true`; administrator login 302 → `/`, dashboard **200** |
+| 12 | Evidence recorded | this section |
 
-```
-UPSTASH_REDIS_REST_URL=https://amused-firefly-67823.upstash.io
-UPSTASH_REDIS_REST_TOKEN=<from the Upstash console: Connect → REST>
-```
+Two things worth remembering from the run:
 
-A bare `REDIS_URL` (the `redis://…:6379` form shown in the console's TCP tab)
-is **not read by any code path** and must not be set: two conventions mean one
-is silently ignored, and a rate limiter that is silently not running is worse
-than none.
+- Step 11 initially still refused the administrator with `too_many_attempts`.
+  That was **correct**: the 42 attempts from step 7 had tripped the per-IP
+  limit, and the counters are shared and durable, so they survived both
+  redeploys. Clearing the `rl:login:*` keys restored access — which is itself
+  the clearest proof that the limiter is backed by Redis rather than by
+  per-instance memory.
+- The outage path is evaluated **before** the "allowed" check, so an outage is
+  never reported as a lockout, and neither is raised after the account lookup —
+  so neither state can be used to probe for existing users.
 
-### Steps once the token is supplied
-
-1. Set both variables in the **Operanto staging environment only** (Vercel →
-   Project → Settings → Environment Variables), not in Pronatona.
-2. Redeploy — Vercel does not apply changed variables to existing deployments.
-3. `GET https://api-staging.operanto.ai/api/health/redis` → expect
-   `{"ok":true,"configured":true,"latencyMs":…}`.
-4. Confirm no credential appears in any response body or log line (the health
-   endpoint deliberately returns no URL or token).
-5. Drive 11 failed logins for one account within 15 minutes; the 11th must be
-   refused.
-6. Repeat from a different client/IP: because the counter is per-account and
-   shared, it must **still** be refused — that is the proof it is not a
-   per-instance memory counter.
-7. Confirm the per-IP policy independently: 41 failed logins across different
-   accounts from one IP must trip `login:ip:*` (40 / 15 min).
-8. Point `UPSTASH_REDIS_REST_URL` at an unreachable host, redeploy, and confirm
-   sign-in is **refused** with "Sign-in is temporarily unavailable" — not
-   silently degraded.
-9. Confirm invitation acceptance also refuses in that state.
-10. Confirm signed event ingestion still returns 202 while Redis is down
-    (ingestion falls back to per-instance memory by design).
-11. Restore the correct URL, redeploy, and confirm sign-in works again with no
-    database intervention.
-12. Record the evidence in this document.
-
-Until step 12 is complete, **distributed rate limiting remains incomplete** and
-staging should not be opened to a wider operational team.
+**Distributed rate limiting is now complete for staging.** Production Upstash
+is a separate database and is not configured.
 
 ---
+
 
 ## Controlled merge and post-merge verification — 2026-07-31, 09:10–09:30 CEST
 
