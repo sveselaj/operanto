@@ -65,11 +65,6 @@ function isSchedulerPath(pathname: string): boolean {
   return pathname.startsWith("/api/internal/");
 }
 
-/** Auth.js endpoints belong to the cockpit host only. */
-function isAuthPath(pathname: string): boolean {
-  return pathname.startsWith("/api/auth/");
-}
-
 export function proxy(request: NextRequest) {
   const siteHost = hostOf(process.env.NEXT_PUBLIC_SITE_URL);
   const appHost = hostOf(process.env.NEXT_PUBLIC_APP_URL);
