@@ -1,0 +1,16 @@
+{
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.operanto.ai" }],
+      "destination": "https://operanto.ai/:path*",
+      "permanent": true
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/internal/events/retry",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

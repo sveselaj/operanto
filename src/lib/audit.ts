@@ -1,32 +1,54 @@
+import "server-only";
+import type { ActorType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import type { WorkspaceContext } from "@/lib/workspace";
+import type { OrgContext } from "@/lib/org-context";
 
-/**
- * Write an audit row for a sensitive mutation. Fire-and-forget friendly, but
- * awaited by callers so failures surface in development.
- */
-export async function audit(
-  ctx: WorkspaceContext,
-  params: {
-    action: string;
-    entity: string;
-    entityId?: string;
-    before?: unknown;
-    after?: unknown;
-    /** Ties related events (e.g. one assistant turn / approval) together. */
-    correlationId?: string;
-  },
-) {
-  await prisma.auditLog.create({
+type AuditInput = {
+  eventType: string;
+  targetType: string;
+  targetId?: string;
+  before?: Prisma.InputJsonValue;
+  after?: Prisma.InputJsonValue;
+  correlationId?: string;
+  requestId?: string;
+};
+
+/** Audit a staff action performed inside an org context. */
+export async function audit(ctx: OrgContext, input: AuditInput) {
+  await prisma.auditEvent.create({
     data: {
-      workspaceId: ctx.workspace.id,
-      actorUserId: ctx.userId,
-      action: params.action,
-      entity: params.entity,
-      entityId: params.entityId,
-      before: (params.before ?? undefined) as object | undefined,
-      after: (params.after ?? undefined) as object | undefined,
-      correlationId: params.correlationId,
+      organisationId: ctx.organisation.id,
+      actorType: "STAFF",
+      actorUserId: ctx.user.id,
+      actorMembershipId: ctx.membership.id,
+      eventType: input.eventType,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      beforeMetadata: input.before,
+      afterMetadata: input.after,
+      correlationId: input.correlationId,
+      requestId: input.requestId,
+    },
+  });
+}
+
+/** Audit a system/integration action (event processing, retries, jobs). */
+export async function auditSystem(
+  organisationId: string,
+  actorType: Extract<ActorType, "SYSTEM" | "INTEGRATION">,
+  input: AuditInput,
+) {
+  await prisma.auditEvent.create({
+    data: {
+      organisationId,
+      actorType,
+      eventType: input.eventType,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      beforeMetadata: input.before,
+      afterMetadata: input.after,
+      correlationId: input.correlationId,
+      requestId: input.requestId,
     },
   });
 }

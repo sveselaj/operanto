@@ -1,121 +1,158 @@
 import "server-only";
-import type { TaskStatus, Priority, Prisma } from "@prisma/client";
+import type { Prisma, TaskPriority } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requirePermission } from "@/lib/rbac";
+import { can, requirePermission } from "@/lib/rbac";
+import { scope, type OrgContext } from "@/lib/org-context";
 import { audit } from "@/lib/audit";
-import type { WorkspaceContext } from "@/lib/workspace";
+import { opportunityAccessWhere } from "@/lib/services/opportunities";
 
-export type TaskFilters = {
-  assignee?: string | "me" | "all";
-  status?: TaskStatus | "all";
+function taskAccessWhere(ctx: OrgContext): Prisma.TaskWhereInput {
+  if (can(ctx.membership.role, "opportunities:view_all")) return scope(ctx);
+  return {
+    ...scope(ctx),
+    OR: [
+      { assignedMembershipId: ctx.membership.id },
+      { createdByMembershipId: ctx.membership.id },
+      { opportunity: { assignedMembershipId: ctx.membership.id } },
+    ],
+  };
+}
+
+export type TaskFilter = {
+  status?: "OPEN" | "COMPLETED";
+  assignedMembershipId?: string;
+  overdue?: boolean;
+  dueBefore?: Date;
 };
 
-export type CreateTaskInput = {
-  title: string;
-  description?: string | null;
-  priority?: Priority;
-  assignedToUserId?: string | null;
-  dueAt?: Date | null;
-  linkedConversationId?: string | null;
-  linkedCustomerId?: string | null;
-  linkedSopId?: string | null;
-};
-
-export type UpdateTaskInput = Partial<{
-  title: string;
-  description: string | null;
-  status: TaskStatus;
-  priority: Priority;
-  assignedToUserId: string | null;
-  dueAt: Date | null;
-}>;
-
-export async function listTasks(ctx: WorkspaceContext, filters: TaskFilters = {}) {
-  requirePermission(ctx.member.role, "tasks:manage");
-  const where: Prisma.TaskWhereInput = { workspaceId: ctx.workspace.id };
-  if (filters.status && filters.status !== "all") where.status = filters.status;
-  if (filters.assignee === "me") where.assignedToUserId = ctx.userId;
-  else if (filters.assignee && filters.assignee !== "all")
-    where.assignedToUserId = filters.assignee;
-
+export async function listTasks(ctx: OrgContext, filter: TaskFilter = {}) {
+  requirePermission(ctx.membership.role, "tasks:manage");
   return prisma.task.findMany({
-    where,
+    where: {
+      ...taskAccessWhere(ctx),
+      ...(filter.status ? { status: filter.status } : {}),
+      ...(filter.assignedMembershipId
+        ? { assignedMembershipId: filter.assignedMembershipId }
+        : {}),
+      ...(filter.overdue ? { status: "OPEN", dueAt: { lt: new Date() } } : {}),
+      ...(filter.dueBefore ? { dueAt: { lte: filter.dueBefore } } : {}),
+    },
     include: {
-      assignedTo: true,
-      linkedConversation: { include: { customer: true } },
+      assignee: { include: { user: { select: { name: true } } } },
+      opportunity: {
+        select: {
+          id: true,
+          summary: true,
+          customer: { select: { id: true, name: true } },
+        },
+      },
     },
     orderBy: [{ status: "asc" }, { dueAt: "asc" }, { createdAt: "desc" }],
     take: 200,
   });
 }
 
-async function assertMember(ctx: WorkspaceContext, userId: string | null | undefined) {
-  if (!userId) return;
-  const m = await prisma.workspaceMember.findUnique({
-    where: { workspaceId_userId: { workspaceId: ctx.workspace.id, userId } },
-  });
-  if (!m) throw new Error("Assignee is not a member of this workspace");
-}
-
-export async function createTask(ctx: WorkspaceContext, input: CreateTaskInput) {
-  requirePermission(ctx.member.role, "tasks:manage");
+export async function createTask(
+  ctx: OrgContext,
+  input: {
+    title: string;
+    description?: string;
+    opportunityId?: string;
+    assignedMembershipId?: string;
+    priority?: TaskPriority;
+    dueAt?: Date;
+  },
+) {
+  requirePermission(ctx.membership.role, "tasks:manage");
   const title = input.title.trim();
-  if (!title) throw new Error("Title is required");
-  await assertMember(ctx, input.assignedToUserId);
+  if (!title || title.length > 200) throw new Error("Title must be 1–200 characters");
 
-  // Validate linked entities belong to this workspace.
-  if (input.linkedConversationId) {
-    const conv = await prisma.conversation.findFirst({
-      where: { id: input.linkedConversationId, workspaceId: ctx.workspace.id },
+  if (input.opportunityId) {
+    const opportunity = await prisma.opportunity.findFirst({
+      where: { ...opportunityAccessWhere(ctx), id: input.opportunityId },
       select: { id: true },
     });
-    if (!conv) throw new Error("Linked conversation not found");
+    if (!opportunity) throw new Error("Opportunity not found");
+  }
+  if (input.assignedMembershipId) {
+    const member = await prisma.membership.findFirst({
+      where: { id: input.assignedMembershipId, ...scope(ctx), status: "ACTIVE" },
+    });
+    if (!member) throw new Error("Assignee is not an active member of this organisation");
   }
 
   const task = await prisma.task.create({
     data: {
-      workspaceId: ctx.workspace.id,
+      organisationId: ctx.organisation.id,
+      opportunityId: input.opportunityId ?? null,
+      assignedMembershipId: input.assignedMembershipId ?? null,
+      createdByMembershipId: ctx.membership.id,
       title,
       description: input.description?.trim() || null,
-      priority: input.priority ?? "normal",
-      assignedToUserId: input.assignedToUserId ?? null,
-      createdByUserId: ctx.userId,
+      priority: input.priority ?? "NORMAL",
       dueAt: input.dueAt ?? null,
-      linkedConversationId: input.linkedConversationId ?? null,
-      linkedCustomerId: input.linkedCustomerId ?? null,
-      linkedSopId: input.linkedSopId ?? null,
     },
   });
-  await audit(ctx, { action: "task.create", entity: "Task", entityId: task.id });
+  if (input.opportunityId) {
+    await prisma.activity.create({
+      data: {
+        organisationId: ctx.organisation.id,
+        opportunityId: input.opportunityId,
+        actorType: "STAFF",
+        actorUserId: ctx.user.id,
+        actorMembershipId: ctx.membership.id,
+        activityType: "task.created",
+        summary: `Task created: ${title}`,
+        metadata: { taskId: task.id },
+      },
+    });
+  }
+  await audit(ctx, {
+    eventType: "task.created",
+    targetType: "Task",
+    targetId: task.id,
+    after: { title },
+  });
   return task;
 }
 
-export async function updateTask(ctx: WorkspaceContext, id: string, input: UpdateTaskInput) {
-  requirePermission(ctx.member.role, "tasks:manage");
+export async function setTaskStatus(
+  ctx: OrgContext,
+  id: string,
+  status: "OPEN" | "COMPLETED",
+) {
+  requirePermission(ctx.membership.role, "tasks:manage");
   const existing = await prisma.task.findFirst({
-    where: { id, workspaceId: ctx.workspace.id },
+    where: { ...taskAccessWhere(ctx), id },
   });
   if (!existing) throw new Error("Task not found");
-  await assertMember(ctx, input.assignedToUserId);
+  if (existing.status === status) return existing;
 
-  const data: Prisma.TaskUpdateInput = {};
-  if (input.title !== undefined) data.title = input.title.trim();
-  if (input.description !== undefined) data.description = input.description?.trim() || null;
-  if (input.status !== undefined) data.status = input.status;
-  if (input.priority !== undefined) data.priority = input.priority;
-  if (input.dueAt !== undefined) data.dueAt = input.dueAt;
-  if (input.assignedToUserId !== undefined)
-    data.assignedTo = input.assignedToUserId
-      ? { connect: { id: input.assignedToUserId } }
-      : { disconnect: true };
-
-  const task = await prisma.task.update({ where: { id }, data });
+  const task = await prisma.task.update({
+    where: { id: existing.id },
+    data: {
+      status,
+      completedAt: status === "COMPLETED" ? new Date() : null,
+    },
+  });
+  if (existing.opportunityId) {
+    await prisma.activity.create({
+      data: {
+        organisationId: ctx.organisation.id,
+        opportunityId: existing.opportunityId,
+        actorType: "STAFF",
+        actorUserId: ctx.user.id,
+        actorMembershipId: ctx.membership.id,
+        activityType: status === "COMPLETED" ? "task.completed" : "task.reopened",
+        summary: `${status === "COMPLETED" ? "Completed" : "Reopened"}: ${existing.title}`,
+        metadata: { taskId: existing.id },
+      },
+    });
+  }
   await audit(ctx, {
-    action: "task.update",
-    entity: "Task",
-    entityId: id,
-    before: { status: existing.status, priority: existing.priority },
-    after: input,
+    eventType: status === "COMPLETED" ? "task.completed" : "task.reopened",
+    targetType: "Task",
+    targetId: existing.id,
   });
   return task;
 }

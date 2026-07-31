@@ -1,942 +1,405 @@
-// Operanto — data model
-// Principle: every tenant-scoped row carries workspaceId and is indexed on it.
-// Cross-tenant isolation is enforced at the data-access layer (see src/lib/workspace.ts).
+// Operanto — multi-tenant operational cockpit.
+//
+// Tenancy: every tenant-scoped row carries `organisationId` and is indexed on
+// it. Cross-tenant isolation is enforced at the data-access layer: no query
+// touches tenant data without a resolved, active membership (see
+// src/lib/org-context.ts). Source-system records are projections — Pronatona
+// remains the system of record for properties, leads, and staff membership;
+// Operanto stores operational projections and orchestration state, linked back
+// through explicit external-identity mappings.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Non-pooled connection for migrations (Neon: host without "-pooler").
+  directUrl = env("DIRECT_URL")
 }
 
-// ─────────────────────────────────────────────────────────────
-// Enums
-// ─────────────────────────────────────────────────────────────
+// ── Identity & tenancy ─────────────────────────────────────────────
 
-enum WorkspaceRole {
-  owner
-  admin
-  manager
-  agent
-  reviewer
-  client_viewer
+enum OrganisationStatus {
+  ACTIVE
+  SUSPENDED
 }
 
-enum MemberStatus {
-  active
-  invited
-  suspended
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
 }
 
-enum ChannelType {
-  instagram
-  facebook
-  whatsapp
-  email
-  sms
-  webchat
-  manual
+enum MembershipRole {
+  ADMIN
+  SUPERVISOR
+  OPERATOR
 }
 
-enum ChannelStatus {
-  connected
-  disconnected
-  error
-  pending
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
 }
 
-enum ConversationStatus {
-  open
-  pending
-  waiting_customer
-  resolved
-  archived
-}
+model Organisation {
+  id        String             @id @default(cuid())
+  name      String
+  slug      String             @unique
+  status    OrganisationStatus @default(ACTIVE)
+  vertical  String             @default("real_estate")
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
 
-enum Priority {
-  low
-  normal
-  high
-  urgent
-}
-
-enum MessageDirection {
-  inbound
-  outbound
-  internal
-}
-
-enum SenderType {
-  customer
-  agent
-  ai
-  system
-}
-
-enum Sentiment {
-  positive
-  neutral
-  frustrated
-  angry
-  confused
-  urgent
-  happy
-  disappointed
-}
-
-enum Intent {
-  pricing_inquiry
-  product_inquiry
-  service_inquiry
-  appointment_request
-  complaint
-  refund_request
-  delivery_question
-  technical_support
-  partnership_inquiry
-  spam
-  unclear
-  urgent_issue
-  qualified_lead
-}
-
-enum TaskStatus {
-  todo
-  in_progress
-  blocked
-  done
-  cancelled
-}
-
-enum SopStatus {
-  draft
-  approved
-  archived
-}
-
-enum ContentChannel {
-  instagram
-  facebook
-  tiktok
-  email
-  blog
-  ad
-  other
-}
-
-enum ContentStatus {
-  idea
-  draft
-  review
-  approved
-  published
-}
-
-enum AIActionStatus {
-  pending
-  suggested
-  accepted
-  rejected
-  edited
-  failed
-}
-
-enum InsightType {
-  common_question
-  objection
-  content_opportunity
-  performance_issue
-  lead_trend
-}
-
-enum InsightStatus {
-  open
-  acknowledged
-  actioned
-  dismissed
-}
-
-enum AutomationTrigger {
-  conversation_created
-  inbound_message
-  conversation_analyzed
-}
-
-// ── Chat cockpit: assistant, tools, approvals ─────────────────
-
-enum AssistantThreadMode {
-  internal_assistant
-  customer_conversation
-}
-
-enum AssistantMessageRole {
-  user
-  assistant
-  system
-  tool
-  internal_note
-}
-
-/**
- * Risk tier of a tool — drives the approval policy.
- */
-enum ToolRisk {
-  read // read-only; may auto-run for permitted users
-  draft // produces a draft/suggestion; never publishes or sends
-  write // external/irreversible effect; requires approval unless policy allows
-}
-
-enum ToolInvocationStatus {
-  proposed // AI proposed it; not yet run
-  awaiting_approval // sensitive; queued for a human decision
-  running
-  completed
-  failed
-  rejected // an approver declined it
-  cancelled
-}
-
-enum ApprovalStatus {
-  pending
-  approved
-  rejected
-  expired
-}
-
-enum MessageDraftStatus {
-  draft
-  approved
-  sent
-  rejected
-  discarded
-}
-
-// ── Generic CRM pipeline ──────────────────────────────────────
-
-enum OpportunityStage {
-  new
-  qualified
-  proposal
-  negotiation
-  won
-  lost
-}
-
-// ── Real-estate vertical (schema lives here; only the vertical
-//    module in src/verticals/real-estate imports these models) ──
-
-enum PropertyType {
-  apartment
-  house
-  villa
-  land
-  commercial
-  office
-}
-
-enum ListingType {
-  sale
-  rent
-}
-
-enum PropertyStatus {
-  available
-  reserved
-  under_offer
-  sold
-  off_market
-}
-
-// ─────────────────────────────────────────────────────────────
-// Core: org / users / membership
-// ─────────────────────────────────────────────────────────────
-
-model Workspace {
-  id              String   @id @default(cuid())
-  name            String
-  slug            String   @unique
-  plan            String   @default("free")
-  timezone        String   @default("Europe/Belgrade")
-  defaultLanguage String   @default("en")
-  /**
-   * Active vertical adapter id (e.g. "generic", "real-estate").
-   */
-  vertical        String   @default("generic")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  members         WorkspaceMember[]
-  channelAccounts ChannelAccount[]
-  customers       Customer[]
-  conversations   Conversation[]
-  messages        Message[]
-  internalNotes   InternalNote[]
-  tags            Tag[]
-  tasks           Task[]
-  sops            SOP[]
-  contentDrafts   ContentDraft[]
-  brandVoices     BrandVoice[]
-  aiActions       AIAction[]
-  insights        Insight[]
-  qaReviews       QAReview[]
-  auditLogs       AuditLog[]
-  automations     Automation[]
-
-  assistantThreads  AssistantThread[]
-  assistantMessages AssistantMessage[]
-  toolInvocations   ToolInvocation[]
-  approvalRequests  ApprovalRequest[]
-  messageDrafts     MessageDraft[]
-  opportunities     Opportunity[]
-  properties        Property[]
-  contextLinks      ConversationContextLink[]
+  memberships      Membership[]
+  invitations      Invitation[]
+  integrations     Integration[]
+  identityMappings ExternalIdentityMapping[]
+  inboundEvents    InboundEvent[]
+  customers        Customer[]
+  opportunities    Opportunity[]
+  propertyContexts PropertyContext[]
+  activities       Activity[]
+  tasks            Task[]
+  auditEvents      AuditEvent[]
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  name         String
-  avatarUrl    String?
-  passwordHash String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                String     @id @default(cuid())
+  name              String
+  email             String     @unique
+  passwordHash      String?
+  status            UserStatus @default(INVITED)
+  passwordUpdatedAt DateTime?
+  sessionsRevokedAt DateTime?
+  lastLoginAt       DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
 
-  memberships   WorkspaceMember[]
-  assignedConvs Conversation[]    @relation("ConversationAssignee")
-  sentMessages  Message[]         @relation("MessageSender")
-  internalNotes InternalNote[]
-  createdTasks  Task[]            @relation("TaskCreator")
-  assignedTasks Task[]            @relation("TaskAssignee")
-  createdSops   SOP[]             @relation("SopCreator")
-  approvedSops  SOP[]             @relation("SopApprover")
-  contentDrafts ContentDraft[]
-  aiActions     AIAction[]
-  qaAsAgent     QAReview[]        @relation("QaAgent")
-  qaAsReviewer  QAReview[]        @relation("QaReviewer")
-  auditLogs     AuditLog[]
-
-  assistantThreads   AssistantThread[]  @relation("AssistantThreadCreator")
-  assistantMessages  AssistantMessage[] @relation("AssistantMessageCreator")
-  toolInvocations    ToolInvocation[]   @relation("ToolInvocationExecutor")
-  approvalsRequested ApprovalRequest[]  @relation("ApprovalRequester")
-  approvalsReviewed  ApprovalRequest[]  @relation("ApprovalReviewer")
-  messageDrafts      MessageDraft[]     @relation("MessageDraftCreator")
-  ownedOpportunities Opportunity[]      @relation("OpportunityOwner")
-  managedProperties  Property[]         @relation("PropertyAgent")
+  memberships Membership[]
 }
 
-model WorkspaceMember {
-  id          String        @id @default(cuid())
-  workspaceId String
-  userId      String
-  role        WorkspaceRole @default(agent)
-  status      MemberStatus  @default(active)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+model Membership {
+  id             String           @id @default(cuid())
+  userId         String
+  organisationId String
+  role           MembershipRole   @default(OPERATOR)
+  status         MembershipStatus @default(INVITED)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
 
-  @@unique([workspaceId, userId])
-  @@index([workspaceId])
+  assignedOpportunities Opportunity[] @relation("OpportunityAssignee")
+  assignedTasks         Task[]        @relation("TaskAssignee")
+  createdTasks          Task[]        @relation("TaskCreator")
+
+  @@unique([organisationId, userId])
   @@index([userId])
 }
 
-// ─────────────────────────────────────────────────────────────
-// Channels & customers
-// ─────────────────────────────────────────────────────────────
+model Invitation {
+  id              String         @id @default(cuid())
+  organisationId  String
+  email           String
+  role            MembershipRole @default(OPERATOR)
+  tokenHash       String         @unique
+  invitedByUserId String?
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime       @default(now())
 
-model ChannelAccount {
-  id                    String        @id @default(cuid())
-  workspaceId           String
-  type                  ChannelType
-  name                  String
-  externalAccountId     String?
-  accessTokenEncrypted  String?
-  refreshTokenEncrypted String?
-  status                ChannelStatus @default(pending)
-  metadata              Json?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
 
-  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  conversations Conversation[]
-
-  @@index([workspaceId])
+  @@index([organisationId, email])
 }
+
+// ── Integrations & event ingestion ─────────────────────────────────
+
+enum IntegrationType {
+  PRONATONA
+}
+
+enum IntegrationStatus {
+  ACTIVE
+  DISABLED
+}
+
+model Integration {
+  id                     String            @id @default(cuid())
+  organisationId         String
+  type                   IntegrationType
+  sourceSystem           String // e.g. "PRONATONA_WEB"
+  sourceOrganisationId   String // the organisation id inside the source system
+  status                 IntegrationStatus @default(ACTIVE)
+  // AES-256-GCM ciphertext of the shared webhook secret (see src/lib/crypto.ts).
+  // A hash would not suffice: HMAC verification needs the plaintext secret.
+  webhookSecretEncrypted String
+  lastReceivedAt         DateTime?
+  lastSuccessfulAt       DateTime?
+  lastErrorAt            DateTime?
+  lastError              String?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  organisation  Organisation   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  inboundEvents InboundEvent[]
+
+  @@unique([type, sourceOrganisationId])
+  @@index([organisationId])
+}
+
+model ExternalIdentityMapping {
+  id                 String   @id @default(cuid())
+  organisationId     String
+  sourceSystem       String
+  sourceEntityType   String // "lead" | "property" | "customer" | "staff" | "organisation" | ...
+  sourceEntityId     String
+  operantoEntityType String // "opportunity" | "property_context" | "customer" | "membership" | ...
+  operantoEntityId   String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, sourceSystem, sourceEntityType, sourceEntityId])
+  @@index([organisationId, operantoEntityType, operantoEntityId])
+}
+
+enum EventProcessingStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  DEAD_LETTER
+}
+
+model InboundEvent {
+  id                   String                @id @default(cuid())
+  organisationId       String
+  integrationId        String
+  eventId              String // source event id — idempotency key per integration
+  eventType            String
+  schemaVersion        Int                   @default(1)
+  sourceSystem         String
+  sourceOrganisationId String
+  occurredAt           DateTime
+  receivedAt           DateTime              @default(now())
+  correlationId        String?
+  rawPayload           Json
+  processingStatus     EventProcessingStatus @default(RECEIVED)
+  attemptCount         Int                   @default(0)
+  lastError            String?
+  processedAt          DateTime?
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  integration  Integration  @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationId, eventId])
+  @@index([organisationId, processingStatus])
+  @@index([organisationId, receivedAt])
+  @@index([organisationId, eventType])
+}
+
+// ── Operational projections ────────────────────────────────────────
 
 model Customer {
-  id            String   @id @default(cuid())
-  workspaceId   String
-  name          String?
-  email         String?
-  phone         String?
-  socialHandles Json?
-  language      String?
-  location      String?
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                 String    @id @default(cuid())
+  organisationId     String
+  sourceSystem       String?
+  sourceCustomerId   String?
+  name               String?
+  email              String?
+  emailNormalized    String? // lowercased/trimmed — matching key, never merged fuzzily
+  phone              String?
+  phoneNormalized    String? // digits with leading + — matching key
+  preferredLanguage  String?
+  preferredChannel   String?
+  matchReason        String? // why the latest inbound identity resolved to this row
+  firstInteractionAt DateTime?
+  lastInteractionAt  DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  conversations Conversation[]
+  organisation  Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   opportunities Opportunity[]
+  activities    Activity[]
 
-  @@index([workspaceId])
+  @@unique([organisationId, sourceSystem, sourceCustomerId])
+  @@index([organisationId, emailNormalized])
+  @@index([organisationId, phoneNormalized])
+  @@index([organisationId, lastInteractionAt])
 }
 
-// ─────────────────────────────────────────────────────────────
-// Inbox
-// ─────────────────────────────────────────────────────────────
-
-model Conversation {
-  id               String             @id @default(cuid())
-  workspaceId      String
-  customerId       String?
-  channelAccountId String?
-  channelType      ChannelType        @default(manual)
-  status           ConversationStatus @default(open)
-  priority         Priority           @default(normal)
-  assignedToUserId String?
-  subject          String?
-  lastMessageAt    DateTime?
-  lastInboundAt    DateTime?
-  lastOutboundAt   DateTime?
-  sentiment        Sentiment?
-  intent           Intent?
-  leadScore        Int?
-  summary          String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-
-  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  customer       Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  channelAccount ChannelAccount?   @relation(fields: [channelAccountId], references: [id], onDelete: SetNull)
-  assignedTo     User?             @relation("ConversationAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
-  messages       Message[]
-  internalNotes  InternalNote[]
-  tags           ConversationTag[]
-  tasks          Task[]
-  qaReviews      QAReview[]
-  contentDrafts  ContentDraft[]
-
-  assistantThreads AssistantThread[]         @relation("ThreadConversation")
-  messageDrafts    MessageDraft[]
-  opportunities    Opportunity[]             @relation("OpportunityConversation")
-  contextLinks     ConversationContextLink[]
-
-  @@index([workspaceId])
-  @@index([workspaceId, status])
-  @@index([assignedToUserId])
+enum OpportunityStage {
+  NEW
+  CONTACT_REQUIRED
+  QUALIFYING
+  VIEWING_REQUESTED
+  VIEWING_SCHEDULED
+  OFFER
+  WON
+  LOST
+  CLOSED
 }
-
-model Message {
-  id                String           @id @default(cuid())
-  workspaceId       String
-  conversationId    String
-  direction         MessageDirection
-  senderType        SenderType
-  senderUserId      String?
-  externalMessageId String?
-  body              String
-  attachments       Json?
-  metadata          Json?
-  createdAt         DateTime         @default(now())
-
-  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender       User?        @relation("MessageSender", fields: [senderUserId], references: [id], onDelete: SetNull)
-
-  @@index([workspaceId])
-  @@index([conversationId])
-}
-
-model InternalNote {
-  id             String   @id @default(cuid())
-  workspaceId    String
-  conversationId String
-  userId         String
-  body           String
-  createdAt      DateTime @default(now())
-
-  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([conversationId])
-}
-
-model Tag {
-  id          String   @id @default(cuid())
-  workspaceId String
-  name        String
-  color       String   @default("#64748b")
-  createdAt   DateTime @default(now())
-
-  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  conversations ConversationTag[]
-
-  @@unique([workspaceId, name])
-  @@index([workspaceId])
-}
-
-model ConversationTag {
-  conversationId String
-  tagId          String
-
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  tag          Tag          @relation(fields: [tagId], references: [id], onDelete: Cascade)
-
-  @@id([conversationId, tagId])
-  @@index([tagId])
-}
-
-// ─────────────────────────────────────────────────────────────
-// Ops: tasks & SOPs
-// ─────────────────────────────────────────────────────────────
-
-model Task {
-  id                   String     @id @default(cuid())
-  workspaceId          String
-  title                String
-  description          String?
-  status               TaskStatus @default(todo)
-  priority             Priority   @default(normal)
-  assignedToUserId     String?
-  createdByUserId      String?
-  dueAt                DateTime?
-  linkedConversationId String?
-  linkedCustomerId     String?
-  linkedSopId          String?
-  createdAt            DateTime   @default(now())
-  updatedAt            DateTime   @updatedAt
-
-  workspace          Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  assignedTo         User?         @relation("TaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
-  createdBy          User?         @relation("TaskCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  linkedConversation Conversation? @relation(fields: [linkedConversationId], references: [id], onDelete: SetNull)
-  linkedSop          SOP?          @relation(fields: [linkedSopId], references: [id], onDelete: SetNull)
-
-  @@index([workspaceId])
-  @@index([workspaceId, status])
-  @@index([assignedToUserId])
-}
-
-model SOP {
-  id               String    @id @default(cuid())
-  workspaceId      String
-  title            String
-  description      String?
-  body             String
-  category         String?
-  status           SopStatus @default(draft)
-  version          Int       @default(1)
-  createdByUserId  String?
-  approvedByUserId String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-
-  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  createdBy  User?     @relation("SopCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  approvedBy User?     @relation("SopApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
-  tasks      Task[]
-
-  @@index([workspaceId])
-}
-
-// ─────────────────────────────────────────────────────────────
-// Studio: brand voice & content
-// ─────────────────────────────────────────────────────────────
-
-model BrandVoice {
-  id             String   @id @default(cuid())
-  workspaceId    String
-  name           String
-  description    String?
-  tone           String?
-  language       String   @default("en")
-  dos            String[]
-  donts          String[]
-  examplePhrases String[]
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  contentDrafts ContentDraft[]
-
-  @@index([workspaceId])
-}
-
-model ContentDraft {
-  id                   String         @id @default(cuid())
-  workspaceId          String
-  title                String
-  channel              ContentChannel @default(instagram)
-  content              String
-  status               ContentStatus  @default(idea)
-  brandVoiceId         String?
-  sourceConversationId String?
-  sourceInsightId      String?
-  scheduledAt          DateTime?
-  createdByUserId      String?
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
-
-  workspace          Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  brandVoice         BrandVoice?   @relation(fields: [brandVoiceId], references: [id], onDelete: SetNull)
-  sourceConversation Conversation? @relation(fields: [sourceConversationId], references: [id], onDelete: SetNull)
-  sourceInsight      Insight?      @relation(fields: [sourceInsightId], references: [id], onDelete: SetNull)
-  createdBy          User?         @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
-
-  @@index([workspaceId])
-}
-
-// ─────────────────────────────────────────────────────────────
-// AI & analytics
-// ─────────────────────────────────────────────────────────────
-
-model AIAction {
-  id             String         @id @default(cuid())
-  workspaceId    String
-  userId         String?
-  actionType     String
-  inputContext   Json?
-  promptTemplate String?
-  model          String?
-  output         Json?
-  confidence     Float?
-  status         AIActionStatus @default(pending)
-  createdAt      DateTime       @default(now())
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  @@index([workspaceId])
-  @@index([workspaceId, actionType])
-}
-
-model Insight {
-  id          String        @id @default(cuid())
-  workspaceId String
-  type        InsightType
-  title       String
-  description String?
-  sourceData  Json?
-  priority    Priority      @default(normal)
-  status      InsightStatus @default(open)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-
-  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  contentDrafts ContentDraft[]
-
-  @@index([workspaceId])
-}
-
-model QAReview {
-  id             String   @id @default(cuid())
-  workspaceId    String
-  conversationId String?
-  agentUserId    String?
-  reviewerUserId String?
-  score          Int?
-  criteriaScores Json?
-  comments       String?
-  createdAt      DateTime @default(now())
-
-  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  agent        User?         @relation("QaAgent", fields: [agentUserId], references: [id], onDelete: SetNull)
-  reviewer     User?         @relation("QaReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
-
-  @@index([workspaceId])
-}
-
-// ─────────────────────────────────────────────────────────────
-// Cross-cutting: audit
-// ─────────────────────────────────────────────────────────────
-
-model Automation {
-  id              String            @id @default(cuid())
-  workspaceId     String
-  name            String
-  trigger         AutomationTrigger @default(conversation_analyzed)
-  enabled         Boolean           @default(true)
-  conditions      Json? // array of { field, value }
-  actions         Json // array of action objects
-  lastRunAt       DateTime?
-  createdByUserId String?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  @@index([workspaceId])
-  @@index([workspaceId, trigger, enabled])
-}
-
-model AuditLog {
-  id            String   @id @default(cuid())
-  workspaceId   String
-  actorUserId   String?
-  action        String
-  entity        String
-  entityId      String?
-  before        Json?
-  after         Json?
-  /**
-   * Correlation id (e.g. an assistant turn) tying related events together.
-   */
-  correlationId String?
-  createdAt     DateTime @default(now())
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  actor     User?     @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
-
-  @@index([workspaceId])
-  @@index([workspaceId, entity])
-  @@index([workspaceId, correlationId])
-}
-
-// ─────────────────────────────────────────────────────────────
-// Chat cockpit: assistant threads, messages, tool runtime
-// ─────────────────────────────────────────────────────────────
-
-model AssistantThread {
-  id                   String              @id @default(cuid())
-  workspaceId          String
-  title                String
-  mode                 AssistantThreadMode @default(internal_assistant)
-  createdByUserId      String?
-  /**
-   * Set when mode = customer_conversation: the inbox conversation it mirrors.
-   */
-  linkedConversationId String?
-  archivedAt           DateTime?
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
-
-  workspace          Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  createdBy          User?              @relation("AssistantThreadCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  linkedConversation Conversation?      @relation("ThreadConversation", fields: [linkedConversationId], references: [id], onDelete: SetNull)
-  messages           AssistantMessage[]
-  toolInvocations    ToolInvocation[]
-
-  @@index([workspaceId])
-  @@index([workspaceId, mode])
-}
-
-model AssistantMessage {
-  id                String               @id @default(cuid())
-  workspaceId       String
-  threadId          String
-  role              AssistantMessageRole
-  content           String               @default("")
-  /**
-   * Card blocks / tool references the UI renders (never raw model reasoning).
-   */
-  structuredContent Json?
-  status            String               @default("complete") // complete | streaming | error
-  confidence        Float?
-  createdByUserId   String?
-  createdAt         DateTime             @default(now())
-
-  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  thread          AssistantThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  createdBy       User?            @relation("AssistantMessageCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  toolInvocations ToolInvocation[]
-
-  @@index([workspaceId])
-  @@index([threadId])
-}
-
-model ToolInvocation {
-  id               String               @id @default(cuid())
-  workspaceId      String
-  threadId         String?
-  messageId        String?
-  toolName         String
-  title            String
-  category         String
-  risk             ToolRisk
-  input            Json
-  output           Json?
-  resultSummary    String?
-  status           ToolInvocationStatus @default(proposed)
-  approvalRequired Boolean              @default(false)
-  /**
-   * Present ⇒ a completed invocation with this key is reused (single execution).
-   */
-  idempotencyKey   String?
-  correlationId    String?
-  executedByUserId String?
-  errorCode        String?
-  errorMessage     String?
-  startedAt        DateTime?
-  completedAt      DateTime?
-  createdAt        DateTime             @default(now())
-
-  workspace  Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  thread     AssistantThread?  @relation(fields: [threadId], references: [id], onDelete: SetNull)
-  message    AssistantMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
-  executedBy User?             @relation("ToolInvocationExecutor", fields: [executedByUserId], references: [id], onDelete: SetNull)
-  approval   ApprovalRequest?
-
-  // NULLs are distinct in Postgres, so many keyless rows coexist; a real key is unique per workspace.
-  @@unique([workspaceId, idempotencyKey])
-  @@index([workspaceId])
-  @@index([workspaceId, status])
-}
-
-model ApprovalRequest {
-  id                String         @id @default(cuid())
-  workspaceId       String
-  toolInvocationId  String         @unique
-  status            ApprovalStatus @default(pending)
-  title             String
-  summary           String?
-  requestedByUserId String?
-  reviewedByUserId  String?
-  reviewedAt        DateTime?
-  reviewNote        String?
-  expiresAt         DateTime?
-  createdAt         DateTime       @default(now())
-
-  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  toolInvocation ToolInvocation @relation(fields: [toolInvocationId], references: [id], onDelete: Cascade)
-  requestedBy    User?          @relation("ApprovalRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
-  reviewedBy     User?          @relation("ApprovalReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
-
-  @@index([workspaceId])
-  @@index([workspaceId, status])
-}
-
-model MessageDraft {
-  id               String             @id @default(cuid())
-  workspaceId      String
-  conversationId   String?
-  threadId         String?
-  toolInvocationId String?            @unique
-  channel          ChannelType        @default(manual)
-  body             String
-  status           MessageDraftStatus @default(draft)
-  languageCode     String?
-  createdByUserId  String?
-  approvedByUserId String?
-  sentAt           DateTime?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-
-  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  createdBy    User?         @relation("MessageDraftCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
-
-  @@index([workspaceId])
-  @@index([conversationId])
-}
-
-// ─────────────────────────────────────────────────────────────
-// Generic CRM pipeline (vertical-agnostic)
-// ─────────────────────────────────────────────────────────────
 
 model Opportunity {
-  id                String           @id @default(cuid())
-  workspaceId       String
-  title             String
-  stage             OpportunityStage @default(new)
-  value             Float?
-  currency          String           @default("EUR")
-  leadScore         Int?
-  /**
-   * Structured requirements extracted from the conversation (budget, area, …).
-   */
-  requirements      Json?
-  contactCustomerId String?
-  ownerUserId       String?
-  conversationId    String?
-  /**
-   * Generic link to a vertical record, e.g. type "property" + a Property id.
-   */
-  linkedRecordType  String?
-  linkedRecordId    String?
-  source            String?
-  nextAction        String?
-  lastActivityAt    DateTime?
-  createdByUserId   String?
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  id                   String           @id @default(cuid())
+  organisationId       String
+  sourceSystem         String?
+  sourceOpportunityId  String? // e.g. the Pronatona lead id
+  customerId           String
+  type                 String // PROPERTY_QUESTION | VIEWING_REQUEST | SELL_PROPERTY | GENERAL_INQUIRY
+  stage                OpportunityStage @default(NEW)
+  sourceStage          String? // the authoritative Pronatona lead status, preserved verbatim
+  assignedMembershipId String?
+  sourceChannel        String?
+  summary              String?
+  inquiryText          String?
+  preferredDate        DateTime?
+  lastActivityAt       DateTime?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
 
-  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  contact      Customer?     @relation(fields: [contactCustomerId], references: [id], onDelete: SetNull)
-  owner        User?         @relation("OpportunityOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
-  conversation Conversation? @relation("OpportunityConversation", fields: [conversationId], references: [id], onDelete: SetNull)
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  assignee     Membership?  @relation("OpportunityAssignee", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
 
-  @@index([workspaceId])
-  @@index([workspaceId, stage])
+  properties OpportunityProperty[]
+  activities Activity[]
+  tasks      Task[]
+
+  @@unique([organisationId, sourceSystem, sourceOpportunityId])
+  @@index([organisationId, stage])
+  @@index([organisationId, assignedMembershipId])
+  @@index([organisationId, lastActivityAt])
+  @@index([customerId])
 }
 
-/**
- * Links a conversation to any structured record (property, opportunity, …).
- */
-model ConversationContextLink {
-  id              String   @id @default(cuid())
-  workspaceId     String
-  conversationId  String
-  recordType      String
-  recordId        String
-  label           String?
-  createdByUserId String?
-  createdAt       DateTime @default(now())
+model PropertyContext {
+  id               String   @id @default(cuid())
+  organisationId   String
+  sourceSystem     String
+  sourcePropertyId String
+  referenceCode    String?
+  title            String?
+  status           String? // source status verbatim (ACTIVE / RESERVED / SOLD / ...)
+  price            Decimal? @db.Decimal(12, 2)
+  currency         String?
+  city             String?
+  thumbnailUrl     String?
+  sourceUrl        String? // canonical URL back into Pronatona
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  organisation  Organisation          @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  opportunities OpportunityProperty[]
 
-  @@unique([conversationId, recordType, recordId])
-  @@index([workspaceId])
-  @@index([conversationId])
+  @@unique([organisationId, sourceSystem, sourcePropertyId])
+  @@index([organisationId, referenceCode])
 }
 
-// ─────────────────────────────────────────────────────────────
-// Real-estate vertical (Pronatona). Only src/verticals/real-estate
-// imports this; the generic core never references Property.
-// ─────────────────────────────────────────────────────────────
+model OpportunityProperty {
+  opportunityId     String
+  propertyContextId String
 
-model Property {
-  id                  String         @id @default(cuid())
-  workspaceId         String
-  code                String
-  title               String
-  type                PropertyType   @default(apartment)
-  listingType         ListingType    @default(sale)
-  status              PropertyStatus @default(available)
-  price               Float
-  currency            String         @default("EUR")
-  areaSqm             Int?
-  bedrooms            Int?
-  bathrooms           Int?
-  city                String
-  district            String?
-  address             String?
-  description         String?
-  /**
-   * string[] of image URLs.
-   */
-  media               Json?
-  features            String[]
-  assignedAgentUserId String?
-  publicationStatus   String         @default("unlisted") // unlisted | listed
-  availabilityNote    String?
-  availableFrom       DateTime?
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
+  opportunity     Opportunity     @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  propertyContext PropertyContext @relation(fields: [propertyContextId], references: [id], onDelete: Cascade)
 
-  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  assignedAgent User?     @relation("PropertyAgent", fields: [assignedAgentUserId], references: [id], onDelete: SetNull)
+  @@id([opportunityId, propertyContextId])
+}
 
-  @@unique([workspaceId, code])
-  @@index([workspaceId])
-  @@index([workspaceId, status])
-  @@index([workspaceId, city])
+// ── Timeline, tasks, audit ─────────────────────────────────────────
+
+enum ActorType {
+  CUSTOMER
+  STAFF
+  SYSTEM
+  INTEGRATION
+}
+
+model Activity {
+  id                String    @id @default(cuid())
+  organisationId    String
+  customerId        String?
+  opportunityId     String?
+  actorType         ActorType
+  actorUserId       String?
+  actorMembershipId String?
+  activityType      String // inquiry.received | customer.created | customer.matched | opportunity.created | ...
+  sourceSystem      String?
+  summary           String
+  metadata          Json?
+  occurredAt        DateTime  @default(now())
+  createdAt         DateTime  @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  customer     Customer?    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  opportunity  Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId, occurredAt])
+  @@index([opportunityId, occurredAt])
+  @@index([customerId, occurredAt])
+}
+
+enum TaskStatus {
+  OPEN
+  COMPLETED
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model Task {
+  id                    String       @id @default(cuid())
+  organisationId        String
+  opportunityId         String?
+  assignedMembershipId  String?
+  createdByMembershipId String?
+  title                 String
+  description           String?
+  status                TaskStatus   @default(OPEN)
+  priority              TaskPriority @default(NORMAL)
+  dueAt                 DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  opportunity  Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  assignee     Membership?  @relation("TaskAssignee", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
+  createdBy    Membership?  @relation("TaskCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
+
+  @@index([organisationId, status, dueAt])
+  @@index([organisationId, assignedMembershipId])
+  @@index([opportunityId])
+}
+
+model AuditEvent {
+  id                String    @id @default(cuid())
+  organisationId    String
+  actorType         ActorType
+  actorUserId       String?
+  actorMembershipId String?
+  targetType        String
+  targetId          String?
+  eventType         String // auth.login | member.invited | opportunity.stage_changed | event.processed | ...
+  beforeMetadata    Json?
+  afterMetadata     Json?
+  correlationId     String?
+  requestId         String?
+  occurredAt        DateTime  @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId, occurredAt])
+  @@index([organisationId, targetType, targetId])
+  @@index([organisationId, correlationId])
 }
