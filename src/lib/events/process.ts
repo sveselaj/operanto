@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { auditSystem } from "@/lib/audit";
 import { handleEvent } from "@/lib/events/handlers";
+import { captureError } from "@/lib/observability";
 
 /**
  * Event processing pipeline.
@@ -108,6 +109,17 @@ export async function processInboundEvent(
       targetId: event.id,
       correlationId: event.correlationId ?? event.eventId,
       after: { eventType: event.eventType, error: message.slice(0, 500) },
+    });
+    // Reported without the payload: the inbound body carries customer names,
+    // emails, phones and inquiry text.
+    await captureError(error, {
+      scope: isFinal ? "events.dead_letter" : "events.process_failed",
+      tags: {
+        eventType: event.eventType,
+        eventId: event.eventId,
+        attempt: event.attemptCount,
+        organisationId: event.organisationId,
+      },
     });
     return isFinal ? "dead_letter" : "failed";
   }

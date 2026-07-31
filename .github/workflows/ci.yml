@@ -52,6 +52,11 @@ jobs:
       - run: pnpm prisma generate
 
       - run: pnpm lint
+
+      # Next generates the global PageProps/LayoutProps/RouteContext helpers
+      # into .next/types; a clean checkout has none, so typecheck must run
+      # after typegen or every typed page fails to compile.
+      - run: pnpm exec next typegen
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
