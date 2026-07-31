@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same branch makes the older run irrelevant.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Explicit, obviously-fake values. Nothing here reaches Neon or any real
+  # service: unit tests mock Prisma, and the build only needs these to exist.
+  DATABASE_URL: postgresql://ci:ci@localhost:5432/operanto_ci
+  DIRECT_URL: postgresql://ci:ci@localhost:5432/operanto_ci
+  AUTH_SECRET: ci-only-not-a-real-secret-0000000000
+  AUTH_URL: http://localhost:3000
+  OPERANTO_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+  NEXT_PUBLIC_SITE_URL: http://localhost:3000
+  NEXT_PUBLIC_APP_URL: http://localhost:3000
+  NEXT_PUBLIC_API_URL: http://localhost:3000
+
+jobs:
+  verify:
+    name: Lint, typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --frozen-lockfile: the committed lockfile is the source of truth; a
+      # drifted lockfile should fail CI rather than be silently resolved.
+      - run: pnpm install --frozen-lockfile
+
+      # postinstall already runs this, but an explicit step makes a client
+      # generation failure obvious instead of surfacing as a type error.
+      - run: pnpm prisma generate
+
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  migrations:
+    name: Migrations apply to a clean database
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: operanto_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d operanto_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Reviewed migrations only — never `db push`, never `migrate reset`.
+      # The database is a disposable service container; no external database
+      # is reachable from this job.
+      - run: pnpm prisma migrate deploy
+
+      # Applying twice must be a no-op: that is what makes a redeploy safe.
+      - run: pnpm prisma migrate deploy
+
+      - name: Seed is idempotent
+        env:
+          SEED_ADMIN_EMAIL: ci-admin@example.invalid
+          SEED_ADMIN_NAME: CI Admin
+          # Fixture credential for a throwaway container, never a real secret.
+          SEED_ADMIN_PASSWORD: ci-only-password-1234
+          PRONATONA_WEBHOOK_SECRET: ci-only-webhook-secret-000000000000
+          PRONATONA_SOURCE_ORGANISATION_ID: org_ci
+        run: |
+          pnpm db:seed
+          pnpm db:seed
+          pnpm prisma migrate status
