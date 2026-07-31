@@ -36,6 +36,8 @@ async function send(mail: Mail): Promise<MailResult> {
         reason: "Email provider is not configured in this environment",
       };
     }
+    // Local development convenience only, and only while unconfigured: once a
+    // provider exists the link is never written to any log.
     console.info(`[email:dev] To: ${mail.to} — ${mail.subject}\n${mail.text}`);
     return { delivered: false, reason: "Email provider not configured (logged)" };
   }
@@ -52,12 +54,20 @@ async function send(mail: Mail): Promise<MailResult> {
         to: [mail.to],
         subject: mail.subject,
         text: mail.text,
+        // Replies should reach a monitored human, not the sending subdomain.
+        ...(process.env.EMAIL_REPLY_TO
+          ? { reply_to: [process.env.EMAIL_REPLY_TO] }
+          : {}),
       }),
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
-      // Body may echo the request; keep only the status.
-      return { delivered: false, reason: `Provider rejected the message (${res.status})` };
+      // The error body can echo the message (and therefore the invitation
+      // link) and may carry account detail — keep only the status code.
+      return {
+        delivered: false,
+        reason: `Provider rejected the message (${res.status})`,
+      };
     }
     const body = (await res.json().catch(() => ({}))) as { id?: string };
     return { delivered: true, providerId: body.id };
