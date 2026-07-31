@@ -12,6 +12,14 @@ import {
 } from "lucide-react";
 
 export const metadata: Metadata = {
+  alternates: { canonical: "/product" },
+  openGraph: {
+    type: "website",
+    siteName: "Operanto",
+    url: "/product",
+    title: "Product",
+    description: "One cockpit for conversations, customers, opportunities, tasks, and the people responsible for them — with AI assistance that proposes and people who decide.",
+  },
   title: "Product",
   description:
     "One cockpit for conversations, customers, opportunities, tasks, and the people responsible for them — with AI assistance that proposes and people who decide.",

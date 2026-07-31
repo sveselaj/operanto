@@ -2,6 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
+  alternates: { canonical: "/real-estate" },
+  openGraph: {
+    type: "website",
+    siteName: "Operanto",
+    url: "/real-estate",
+    title: "For real estate",
+    description: "Property inquiries become leads with full context: the person, the property, the source, and a follow-up with a due time. Pronatona is the first implementation, in progress.",
+  },
   title: "For real estate",
   description:
     "Property inquiries become leads with full context: the person, the property, the source, and a follow-up with a due time. Pronatona is the first implementation, in progress.",

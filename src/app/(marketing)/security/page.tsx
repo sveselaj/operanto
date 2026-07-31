@@ -12,6 +12,14 @@ import {
 } from "lucide-react";
 
 export const metadata: Metadata = {
+  alternates: { canonical: "/security" },
+  openGraph: {
+    type: "website",
+    siteName: "Operanto",
+    url: "/security",
+    title: "Security",
+    description: "The security model as it is built: invitation-only access, organisation-scoped authorization on every request, signed webhooks with replay protection, encrypted secrets, and a full audit trail.",
+  },
   title: "Security",
   description:
     "The security model as it is built: invitation-only access, organisation-scoped authorization on every request, signed webhooks with replay protection, encrypted secrets, and a full audit trail.",

@@ -2,6 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
+  alternates: { canonical: "/about" },
+  openGraph: {
+    type: "website",
+    siteName: "Operanto",
+    url: "/about",
+    title: "About",
+    description: "Operanto is a European technology company building the operations layer between source systems and the people who run customer operations.",
+  },
   title: "About",
   description:
     "Operanto is a European technology company building the operations layer between source systems and the people who run customer operations.",

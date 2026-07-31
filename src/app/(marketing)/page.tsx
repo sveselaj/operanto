@@ -3,6 +3,16 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 
 export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    siteName: "Operanto",
+    url: "/",
+    title: {
+    absolute: "Operanto — Customer operations that remember, continue, and resolve",
+  },
+    description: "Operanto is the operational cockpit between your source systems and the people who run customer operations. Every inquiry arrives with its history, and every commitment has a name and a due time.",
+  },
   title: {
     absolute: "Operanto — Customer operations that remember, continue, and resolve",
   },

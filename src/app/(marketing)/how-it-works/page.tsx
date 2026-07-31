@@ -2,6 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
+  alternates: { canonical: "/how-it-works" },
+  openGraph: {
+    type: "website",
+    siteName: "Operanto",
+    url: "/how-it-works",
+    title: "How it works",
+    description: "Follow one inquiry from a source system to a resolved follow-up: a signed domain event, verified and processed exactly once, becomes context and a task for a responsible person.",
+  },
   title: "How it works",
   description:
     "Follow one inquiry from a source system to a resolved follow-up: a signed domain event, verified and processed exactly once, becomes context and a task for a responsible person.",

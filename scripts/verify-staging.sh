@@ -37,12 +37,17 @@ loc()  { curl -sS -m 20 -o /dev/null -w "%{redirect_url}" "$@" 2>/dev/null || ec
 body() { curl -sS -m 20 "$@" 2>/dev/null || echo ""; }
 
 echo "== 1. DNS resolution (must point at Vercel, not the registrar's parking IPs)"
+# Vercel publishes several apex A targets (76.76.21.21 historically,
+# 216.150.1.1 / 216.198.79.1 on the newer anycast range). Rather than pin one,
+# require that the apex is served by Vercel — proven by the response headers.
 apex=$(dig +short A $SITE | tr '\n' ' ')
-case "$apex" in
-  *76.76.21.21*) ok "$SITE A -> 76.76.21.21" ;;
-  "")            bad "$SITE A" "no answer" ;;
-  *)             bad "$SITE A" "points at $apex (expected 76.76.21.21)" ;;
-esac
+if [ -z "$apex" ]; then
+  bad "$SITE A" "no answer"
+elif curl -sSI -m 25 "https://$SITE/" 2>/dev/null | grep -qi "^server: *Vercel"; then
+  ok "$SITE A -> $apex (served by Vercel)"
+else
+  bad "$SITE A" "points at $apex but the host is not served by Vercel"
+fi
 for h in $WWW $APP $API; do
   cname=$(dig +short CNAME "$h" | tr '\n' ' ')
   addr=$(dig +short A "$h" | tr '\n' ' ')
@@ -55,11 +60,17 @@ done
 
 echo "== 2. HTTPS certificates"
 for h in $SITE $WWW $APP $API; do
-  if echo | openssl s_client -servername "$h" -connect "$h:443" 2>/dev/null | grep -q "Verify return code: 0"; then
-    exp=$(echo | openssl s_client -servername "$h" -connect "$h:443" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
-    ok "$h certificate valid (expires $exp)"
+  # A certificate must actually be PRESENTED and verify: openssl prints
+  # "Verify return code: 0 (ok)" even when the handshake yielded no peer
+  # certificate, so require the subject/dates too.
+  out=$(echo | openssl s_client -servername "$h" -connect "$h:443" 2>/dev/null)
+  subject=$(printf '%s' "$out" | grep -m1 "^subject=")
+  verified=$(printf '%s' "$out" | grep -c "Verify return code: 0")
+  if [ -n "$subject" ] && [ "$verified" -ge 1 ]; then
+    exp=$(printf '%s' "$out" | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+    ok "$h certificate presented and valid (${subject#subject=}, expires $exp)"
   else
-    bad "$h certificate" "handshake/verification failed"
+    bad "$h certificate" "no verified certificate presented (issuance pending?)"
   fi
 done
 
@@ -157,7 +168,7 @@ echo "$robots" | grep -q "Sitemap: https://$SITE/sitemap.xml" && ok "robots poin
 echo "$robots" | grep -q "Disallow: /dashboard" && ok "robots disallows cockpit" || bad "robots cockpit" "missing"
 for page in "" product how-it-works real-estate security about contact; do
   txt=$(body "https://$SITE/$page")
-  if echo "$txt" | grep -Eqi "trusted by [0-9]|[0-9]+% (faster|more)|[0-9,]+ (happy )?customers"; then
+  if echo "$txt" | grep -Eqi "trusted by [0-9]|[0-9]+% (faster|more)|[0-9][0-9,]* (happy )?customers|[0-9]+x (faster|more)"; then
     bad "no fabricated metrics on /$page" "suspicious claim found"
   fi
 done

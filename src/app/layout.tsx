@@ -22,6 +22,26 @@ export const metadata: Metadata = {
   },
   description:
     "Operanto connects customers, conversations, opportunities, tasks, staff, and source systems into one operational cockpit.",
+  // Canonical URLs always point at the marketing domain, even when a page is
+  // served from another host.
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    siteName: "Operanto",
+    url: "/",
+    title: "Operanto — Customer operations that remember, continue, and resolve",
+    description:
+      "Operanto connects customers, conversations, opportunities, tasks, staff, and source systems into one operational cockpit.",
+    locale: "en",
+  },
+  // No image is declared: shipping an og:image URL we do not serve would be
+  // a broken promise to every social preview that fetches it.
+  twitter: {
+    card: "summary",
+    title: "Operanto — Customer operations that remember, continue, and resolve",
+    description:
+      "Operanto connects customers, conversations, opportunities, tasks, staff, and source systems into one operational cockpit.",
+  },
 };
 
 export default function RootLayout({
