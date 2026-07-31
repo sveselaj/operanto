@@ -75,6 +75,9 @@ Known limitations of serving multiple hosts from one Vercel project:
 Rate limiting uses the **Upstash REST convention only**
 (`UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`); a bare `REDIS_URL`
 is intentionally NOT supported — one convention, no conflicting config.
+Sensitive limits (login, invitation acceptance) fail CLOSED when a configured
+Redis is unreachable. Provisioning and verification steps:
+`docs/production-activation.md`.
 
 Staging checklist:
 

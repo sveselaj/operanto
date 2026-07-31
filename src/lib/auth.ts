@@ -34,7 +34,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (!parsed.success) return null;
         const email = parsed.data.email.toLowerCase();
 
-        const perAccount = await rateLimit(`login:acct:${email}`, 10, 15 * 60_000);
+        const perAccount = await rateLimit(`login:acct:${email}`, 10, 15 * 60_000, {
+          sensitive: true,
+        });
         if (!perAccount.allowed) throw new TooManyAttemptsError();
 
         const user = await prisma.user.findUnique({ where: { email } });

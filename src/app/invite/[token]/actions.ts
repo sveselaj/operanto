@@ -11,7 +11,9 @@ export async function acceptInvitationAction(
   formData: FormData,
 ): Promise<string | null> {
   const ip = clientIp(await headers());
-  const limit = await rateLimit(`invite:${ip}`, 10, 15 * 60_000);
+  const limit = await rateLimit(`invite:${ip}`, 10, 15 * 60_000, {
+    sensitive: true,
+  });
   if (!limit.allowed) return "Too many attempts. Try again later.";
 
   const parsed = z
