@@ -1,5 +1,75 @@
 # Staging verification record
 
+## Staging database cleanup before wider access — 2026-07-31, 09:05 CEST
+
+**Backup taken first:** logical dump of the staging database with a matching
+client (`docker run --rm postgres:18-alpine pg_dump "$DIRECT_URL"
+--no-owner --no-privileges`), 201 KB,
+SHA-256 `22634db0b715a8bee294afd7bc8141e69f1b04141bb673518fc070250d111005`,
+stored outside the repository. The local `pg_dump` (17.5) refuses Neon's
+server (18.4), hence the containerised client. No Neon branch/snapshot was
+created — that requires Neon API credentials this environment does not have;
+the logical dump is the restore point.
+
+**Cleanup command** (reviewable, transactional, no destructive reset):
+
+```sh
+psql "$DATABASE_URL" -f scripts/clean-staging-fixtures.sql
+```
+
+The script deletes only precisely-identified fixture and probe rows
+(`isolation-test` organisation, the two fixture users, customers named
+`E2E Customer *` / `Rotation Probe *` / `Staging Probe *` and their
+opportunities, generated property contexts `PRN-E2E-*` / `PRN-STG-*`,
+ingestion rows `evt_stg_*` / `evt_dl_*` / `evt_bad_*` / `evt_old_*` /
+`evt_org_*` / `evt_big_*`, and mappings/audit rows whose target no longer
+exists). It preserves the staging organisation, its administrator, the
+integration row **including the encrypted webhook secret**, the migration
+history, and all staff-action audit rows. Opportunities are removed before
+their customers because `Opportunity → Customer` is `ON DELETE RESTRICT`; the
+first attempt hit that constraint and the transaction rolled back with no
+partial deletion, which is why the script is wrapped in `BEGIN`/`COMMIT`.
+
+**Row counts:**
+
+| Table | Before | After cleanup | After re-seed |
+|---|---|---|---|
+| Organisation | 2 | 1 | 1 |
+| User | 3 | 1 | 1 |
+| Membership | 3 | 1 | 1 |
+| Integration | 1 | 1 | 1 |
+| InboundEvent | 34 | 0 | 0 |
+| Customer | 34 | 0 | 0 |
+| Opportunity | 34 | 0 | 0 |
+| PropertyContext | 29 | 0 | 0 |
+| OpportunityProperty | 29 | 0 | 0 |
+| Activity | 162 | 0 | 0 |
+| Task | 30 | 0 | 0 |
+| ExternalIdentityMapping | 63 | 0 | 0 |
+| AuditEvent | 79 | 16 | 16 |
+| Invitation | 0 | 0 | 0 |
+
+**Post-cleanup verification:**
+
+- `pnpm db:seed` run twice **without** `SEED_TEST_USERS` / `SEED_SECOND_ORG`:
+  second run reports "Integration already present — secret unchanged" and
+  changes nothing — idempotent.
+- Administrator login on `https://staging.operanto.ai` returns 302 and
+  `/dashboard` renders 200.
+- Integration still `PRONATONA` / `PRONATONA_WEB` / `org_pronatona` / `ACTIVE`
+  with its encrypted secret present.
+- Dashboard starts clean: "Nothing open right now", "No open tasks assigned to
+  you", "No opportunities yet", "No activity yet", integration panel ACTIVE.
+- Fixture accounts are gone: both `operator@operanto.local` and
+  `admin@isolation-test.local` now fail authentication (`CredentialsSignin`).
+
+Re-running the acceptance suites against staging will recreate fixtures and
+probe rows; re-run this cleanup afterwards (it requires
+`SEED_TEST_USERS=1` plus env-supplied passwords to recreate the fixtures at
+all, and the seed refuses fixtures entirely when `NODE_ENV=production`).
+
+---
+
 ## Post-DNS staging verification — 2026-07-31, 08:30–08:55 CEST — **PASSED**
 
 **Deployed commit:** `6f44bc023420afdb5265f0ead23e013f10a03aa8` (`6f44bc0`),
