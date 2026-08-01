@@ -53,6 +53,13 @@ model Organisation {
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 
+  /// Days conversation message bodies are kept before the retention sweep
+  /// redacts them. Null = the platform default (12 months, provisional —
+  /// the production value requires contractual and legal confirmation, see
+  /// docs/operanto-conversations-foundation.md). Erasure and restriction
+  /// always take precedence over retention.
+  messageRetentionDays Int?
+
   memberships      Membership[]
   invitations      Invitation[]
   integrations     Integration[]
@@ -64,6 +71,11 @@ model Organisation {
   activities       Activity[]
   tasks            Task[]
   auditEvents      AuditEvent[]
+  channelConnections       ChannelConnection[]
+  conversations            Conversation[]
+  conversationParticipants ConversationParticipant[]
+  messages                 Message[]
+  conversationNotes        ConversationNote[]
 }
 
 model User {
@@ -108,6 +120,11 @@ model Membership {
   assignedOpportunities Opportunity[] @relation("OpportunityAssignee")
   assignedTasks         Task[]        @relation("TaskAssignee")
   createdTasks          Task[]        @relation("TaskCreator")
+  assignedConversations Conversation[] @relation("ConversationAssignee")
+  createdConversations  Conversation[] @relation("ConversationCreator")
+  sentMessages          Message[]      @relation("MessageSender")
+  conversationNotes     ConversationNote[]        @relation("NoteAuthor")
+  conversationPresences ConversationParticipant[] @relation("ParticipantMembership")
 
   @@unique([organisationId, userId])
   @@index([userId])
@@ -262,6 +279,8 @@ model Customer {
   organisation  Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   opportunities Opportunity[]
   activities    Activity[]
+  conversations Conversation[]
+  participations ConversationParticipant[]
 
   @@unique([organisationId, sourceSystem, sourceCustomerId])
   @@index([organisationId, emailNormalized])
@@ -361,6 +380,7 @@ model Activity {
   organisationId    String
   customerId        String?
   opportunityId     String?
+  conversationId    String?
   actorType         ActorType
   actorUserId       String?
   actorMembershipId String?
@@ -371,13 +391,15 @@ model Activity {
   occurredAt        DateTime  @default(now())
   createdAt         DateTime  @default(now())
 
-  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  customer     Customer?    @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  opportunity  Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  customer     Customer?     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  opportunity  Opportunity?  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([organisationId, occurredAt])
   @@index([opportunityId, occurredAt])
   @@index([customerId, occurredAt])
+  @@index([conversationId, occurredAt])
 }
 
 enum TaskStatus {
@@ -415,6 +437,202 @@ model Task {
   @@index([organisationId, status, dueAt])
   @@index([organisationId, assignedMembershipId])
   @@index([opportunityId])
+}
+
+// ── Conversations foundation ───────────────────────────────────────
+//
+// Slice 1 of the consolidation plan (docs/operanto-target-architecture.md):
+// organisation-scoped conversations with manual entry and a deterministic
+// simulator channel. Live provider channels, AI assistance, and attachments
+// are explicitly deferred — see docs/operanto-conversations-foundation.md.
+
+enum ChannelType {
+  MANUAL
+  SIMULATOR
+}
+
+enum ChannelConnectionStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  ARCHIVED
+}
+
+enum ConversationPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum ConversationParticipantType {
+  CUSTOMER
+  STAFF
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageSenderType {
+  CUSTOMER
+  STAFF
+  SYSTEM
+}
+
+/// Delivery lifecycle foundation. Slice 1 (manual + simulator channels) only
+/// ever writes RECORDED — nothing is transmitted anywhere. The remaining
+/// values are the contract live channel adapters will drive in a later slice;
+/// they are declared now so that migration is additive, not corrective.
+enum MessageDeliveryStatus {
+  RECORDED
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+model ChannelConnection {
+  id             String                  @id @default(cuid())
+  organisationId String
+  type           ChannelType
+  displayName    String
+  status         ChannelConnectionStatus @default(ACTIVE)
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  // No credential columns: MANUAL and SIMULATOR channels have nothing to
+  // authenticate. Live channels add encrypted credentials in their own slice.
+
+  organisation  Organisation   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  messages      Message[]
+
+  @@unique([organisationId, type, displayName])
+  @@index([organisationId])
+}
+
+model Conversation {
+  id                    String               @id @default(cuid())
+  organisationId        String
+  /// Null while the counterpart is not linked to a Customer record; the
+  /// CUSTOMER participant row then carries their display identity.
+  customerId            String?
+  channelConnectionId   String?
+  channelType           ChannelType          @default(MANUAL)
+  /// Thread id inside the source channel (simulator scenarios set one so
+  /// re-runs are idempotent; live channels will use provider thread ids).
+  providerThreadId      String?
+  subject               String?
+  status                ConversationStatus   @default(OPEN)
+  priority              ConversationPriority @default(NORMAL)
+  assignedMembershipId  String?
+  createdByMembershipId String?
+  lastMessageAt         DateTime?
+  lastInboundAt         DateTime?
+  lastOutboundAt        DateTime?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  organisation Organisation       @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  customer     Customer?          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  connection   ChannelConnection? @relation(fields: [channelConnectionId], references: [id], onDelete: Restrict)
+  assignee     Membership?        @relation("ConversationAssignee", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
+  createdBy    Membership?        @relation("ConversationCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
+
+  participants ConversationParticipant[]
+  messages     Message[]
+  notes        ConversationNote[]
+  activities   Activity[]
+
+  @@unique([organisationId, channelConnectionId, providerThreadId])
+  @@index([organisationId, lastMessageAt])
+  @@index([organisationId, status, lastMessageAt])
+  @@index([organisationId, assignedMembershipId])
+  @@index([organisationId, customerId])
+}
+
+model ConversationParticipant {
+  id             String                      @id @default(cuid())
+  organisationId String
+  conversationId String
+  type           ConversationParticipantType
+  /// Set when the participant is a linked Customer record.
+  customerId     String?
+  /// Set when the participant is a staff member (first message creates it).
+  membershipId   String?
+  /// Display identity for counterparts that are not (yet) linked to a
+  /// Customer. Redacted on erasure of the linked customer.
+  displayName    String?
+  /// Sender reference inside the source channel (e.g. a simulator handle).
+  externalRef    String?
+  createdAt      DateTime                    @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customer     Customer?    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  membership   Membership?  @relation("ParticipantMembership", fields: [membershipId], references: [id], onDelete: SetNull)
+
+  @@unique([organisationId, conversationId, customerId])
+  @@unique([organisationId, conversationId, membershipId])
+  @@index([conversationId])
+  @@index([organisationId, customerId])
+}
+
+model Message {
+  id                  String                @id @default(cuid())
+  organisationId      String
+  conversationId      String
+  channelConnectionId String?
+  direction           MessageDirection
+  senderType          MessageSenderType
+  senderMembershipId  String?
+  body                String
+  /// Message id inside the source channel — the dedupe key. Enforced by a
+  /// tenancy-scoped unique constraint, never by read-then-write.
+  providerMessageId   String?
+  providerTimestamp   DateTime?
+  deliveryStatus      MessageDeliveryStatus @default(RECORDED)
+  metadata            Json?
+  /// Set when the body was replaced by the retention sweep or an erasure.
+  redactedAt          DateTime?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  organisation Organisation       @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  conversation Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  connection   ChannelConnection? @relation(fields: [channelConnectionId], references: [id], onDelete: Restrict)
+  sender       Membership?        @relation("MessageSender", fields: [senderMembershipId], references: [id], onDelete: SetNull)
+
+  @@unique([organisationId, channelConnectionId, providerMessageId])
+  @@index([conversationId, createdAt])
+  @@index([organisationId, redactedAt, createdAt])
+}
+
+/// Internal staff commentary. Deliberately a separate model from Message so
+/// a future outbound channel adapter cannot ship a note to a customer by
+/// mishandling a direction flag.
+model ConversationNote {
+  id                 String   @id @default(cuid())
+  organisationId     String
+  conversationId     String
+  authorMembershipId String?
+  body               String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  author       Membership?  @relation("NoteAuthor", fields: [authorMembershipId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
 }
 
 model AuditEvent {

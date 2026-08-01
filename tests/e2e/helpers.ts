@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
-import type { APIRequestContext, Page } from "@playwright/test";
+import { generateTotp } from "../../src/lib/totp";
+import type { APIRequestContext, BrowserContext, Page } from "@playwright/test";
 
 export const EVENTS_PATH = "/api/v1/integrations/pronatona/events";
 
@@ -156,12 +157,83 @@ export async function workerHealth(request: APIRequestContext) {
   };
 }
 
-export async function login(page: Page, email: string, password: string) {
+/**
+ * Counters already spent in this process. The server refuses a TOTP counter
+ * twice (replay protection), so a second sign-in inside the same 30 s window
+ * must present a recovery code instead of the same code again.
+ */
+const spentCounters = new Set<number>();
+let recoveryCodeIndex = 0;
+
+/** Fixture recovery codes are deterministic — see prisma/seed.ts. */
+function nextRecoveryCode(): string {
+  return `TEST${String(recoveryCodeIndex++).padStart(5, "0")}`;
+}
+
+function secondFactorFor(): string {
+  const secret = process.env.SEED_TEST_TOTP_SECRET;
+  if (!secret) throw new Error("SEED_TEST_TOTP_SECRET missing in env");
+  const counter = Math.floor(Date.now() / 1000 / 30);
+  if (spentCounters.has(counter)) return nextRecoveryCode();
+  spentCounters.add(counter);
+  return generateTotp(secret);
+}
+
+/**
+ * Session cookies from the last successful sign-in, keyed by account.
+ *
+ * The suite signs in roughly ten times, and with a mandatory second factor each
+ * sign-in is TWO submissions against a limit of ten per account per fifteen
+ * minutes — so a full run locks itself out partway through. Reusing the session
+ * keeps the run under the limit without weakening the limit itself, which is a
+ * real control and not something a test should be allowed to soften.
+ *
+ * Self-healing: a cached cookie that no longer works (the sign-out and
+ * session-revocation tests deliberately kill it) simply falls through to a real
+ * sign-in, so no test is silently skipped.
+ */
+type SessionCookies = Awaited<ReturnType<BrowserContext["cookies"]>>;
+const sessionCache = new Map<string, SessionCookies>();
+
+/**
+ * Sign in, completing the second factor when the account has one. Accounts
+ * that do not require 2FA (OPERATOR) never see the prompt.
+ *
+ * Pass `{ fresh: true }` when the test is *about* signing in and must exercise
+ * the real form rather than a restored session.
+ */
+export async function login(
+  page: Page,
+  email: string,
+  password: string,
+  options: { fresh?: boolean } = {},
+) {
+  const cached = options.fresh ? undefined : sessionCache.get(email);
+  if (cached) {
+    await page.context().addCookies(cached);
+    await page.goto("/dashboard");
+    if (page.url().includes("/dashboard")) return;
+    sessionCache.delete(email);
+    await page.context().clearCookies();
+  }
+
   await page.goto("/login");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
+
+  const tokenField = page.getByLabel("Authentication code");
+  await Promise.race([
+    page.waitForURL("**/dashboard").catch(() => undefined),
+    tokenField.waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined),
+  ]);
+
+  if (await tokenField.isVisible().catch(() => false)) {
+    await tokenField.fill(secondFactorFor());
+    await page.getByRole("button", { name: "Sign in" }).click();
+  }
   await page.waitForURL("**/dashboard");
+  sessionCache.set(email, await page.context().cookies());
 }
 
 export function adminCredentials() {

@@ -4,9 +4,17 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/rbac";
 import { scope, type OrgContext } from "@/lib/org-context";
 import { audit } from "@/lib/audit";
-import { payloadRetentionDays, redactPayload } from "@/lib/privacy-redaction";
+import {
+  messageRetentionDays,
+  payloadRetentionDays,
+  redactPayload,
+} from "@/lib/privacy-redaction";
 
-export { payloadRetentionDays, redactPayload } from "@/lib/privacy-redaction";
+export {
+  messageRetentionDays,
+  payloadRetentionDays,
+  redactPayload,
+} from "@/lib/privacy-redaction";
 
 /**
  * Privacy lifecycle: erasure, restriction of processing, and retention.
@@ -31,6 +39,8 @@ export type ErasureResult = {
   opportunities: number;
   activities: number;
   events: number;
+  conversations: number;
+  messages: number;
 };
 
 /**
@@ -111,7 +121,42 @@ export async function eraseCustomer(
         });
       }
 
-      // 5. The raw inbound events — a verbatim copy of everything received.
+      // 5. Conversations. Message bodies (all senders, not only the
+      //    customer's — staff replies quote the person), internal notes,
+      //    subjects, and the display identity on participant rows.
+      const conversationRows = await tx.conversation.findMany({
+        where: { ...scope(ctx), customerId: customer.id },
+        select: { id: true },
+      });
+      const conversationIds = conversationRows.map((c) => c.id);
+      let messages = 0;
+      if (conversationIds.length > 0) {
+        await tx.conversation.updateMany({
+          where: { ...scope(ctx), id: { in: conversationIds } },
+          data: { subject: ERASED_TEXT },
+        });
+        const redactedMessages = await tx.message.updateMany({
+          where: { ...scope(ctx), conversationId: { in: conversationIds } },
+          data: { body: ERASED_TEXT, metadata: Prisma.DbNull, redactedAt: new Date() },
+        });
+        messages = redactedMessages.count;
+        await tx.conversationNote.updateMany({
+          where: { ...scope(ctx), conversationId: { in: conversationIds } },
+          data: { body: ERASED_TEXT },
+        });
+        await tx.activity.updateMany({
+          where: { ...scope(ctx), conversationId: { in: conversationIds } },
+          data: { summary: ERASED_TEXT, metadata: Prisma.DbNull },
+        });
+      }
+      // Participant rows referencing this customer can also carry a display
+      // name or a channel handle from before the record was linked.
+      await tx.conversationParticipant.updateMany({
+        where: { ...scope(ctx), customerId: customer.id },
+        data: { displayName: null, externalRef: null },
+      });
+
+      // 6. The raw inbound events — a verbatim copy of everything received.
       //    Matched by the source lead ids this customer's opportunities came
       //    from, since that is the only link back to the originating event.
       let events = 0;
@@ -143,6 +188,8 @@ export async function eraseCustomer(
         opportunities: opportunities.count,
         activities: activities.count,
         events,
+        conversations: conversationIds.length,
+        messages,
       };
     },
     { timeout: 30_000, maxWait: 10_000 },
@@ -159,6 +206,8 @@ export async function eraseCustomer(
       opportunitiesRedacted: result.opportunities,
       activitiesRedacted: result.activities,
       eventPayloadsRedacted: result.events,
+      conversationsRedacted: result.conversations,
+      messagesRedacted: result.messages,
     },
   });
 
@@ -232,4 +281,44 @@ export async function redactExpiredPayloads(limit = 500): Promise<{
   }
 
   return { scanned: expired.length, redacted: expired.length, retentionDays };
+}
+
+const RETENTION_EXPIRED_TEXT = "[expired]";
+
+/**
+ * Retention sweep for conversation message bodies. The window is configurable
+ * per organisation (`Organisation.messageRetentionDays`), defaulting to the
+ * provisional 12 months; erasure requests do not wait for it — they redact
+ * immediately via eraseCustomer. Bodies are replaced in place and the row
+ * survives, so the conversation's shape (who wrote when, over which channel)
+ * remains intact for operations and audit.
+ */
+export async function redactExpiredMessages(): Promise<{
+  organisations: number;
+  redacted: number;
+}> {
+  const organisations = await prisma.organisation.findMany({
+    select: { id: true, messageRetentionDays: true },
+  });
+
+  let redacted = 0;
+  for (const organisation of organisations) {
+    const retentionDays = messageRetentionDays(organisation.messageRetentionDays);
+    const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+    const result = await prisma.message.updateMany({
+      where: {
+        organisationId: organisation.id,
+        redactedAt: null,
+        createdAt: { lt: cutoff },
+      },
+      data: {
+        body: RETENTION_EXPIRED_TEXT,
+        metadata: Prisma.DbNull,
+        redactedAt: new Date(),
+      },
+    });
+    redacted += result.count;
+  }
+
+  return { organisations: organisations.length, redacted };
 }
