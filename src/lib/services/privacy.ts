@@ -310,6 +310,14 @@ export async function redactExpiredMessages(): Promise<{
         organisationId: organisation.id,
         redactedAt: null,
         createdAt: { lt: cutoff },
+        // Restriction of processing (Art. 18) pauses DISPOSAL as much as use:
+        // a restricted customer may need the data preserved while a dispute
+        // runs, so their conversations are held untouched until the
+        // restriction lifts. Erasure, by contrast, never waits — it redacts
+        // immediately through eraseCustomer regardless of age.
+        conversation: {
+          OR: [{ customerId: null }, { customer: { restrictedAt: null } }],
+        },
       },
       data: {
         body: RETENTION_EXPIRED_TEXT,

@@ -22,12 +22,6 @@ CREATE TYPE "MessageSenderType" AS ENUM ('CUSTOMER', 'STAFF', 'SYSTEM');
 -- CreateEnum
 CREATE TYPE "MessageDeliveryStatus" AS ENUM ('RECORDED', 'QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED');
 
--- DropIndex
-DROP INDEX "Customer_organisationId_erasedAt_idx";
-
--- DropIndex
-DROP INDEX "InboundEvent_payloadRedactedAt_receivedAt_idx";
-
 -- AlterTable
 ALTER TABLE "Activity" ADD COLUMN     "conversationId" TEXT;
 

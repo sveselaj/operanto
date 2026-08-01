@@ -231,6 +231,30 @@ export async function login(
   if (await tokenField.isVisible().catch(() => false)) {
     await tokenField.fill(secondFactorFor());
     await page.getByRole("button", { name: "Sign in" }).click();
+
+    // The per-process spent-counter set cannot see codes another process
+    // consumed: two suite invocations inside the same 30 s TOTP window mint
+    // the same code, and the server's replay guard rightly refuses the second
+    // one. Waiting out the window and submitting the next code always
+    // succeeds, because the counter is strictly increasing.
+    const rejection = page
+      .getByRole("alert")
+      .filter({ hasText: /code is not valid/i });
+    const outcome = await Promise.race([
+      page.waitForURL("**/dashboard", { timeout: 15_000 }).then(
+        () => "ok" as const,
+        () => "pending" as const,
+      ),
+      rejection.waitFor({ state: "visible", timeout: 15_000 }).then(
+        () => "rejected" as const,
+        () => "pending" as const,
+      ),
+    ]);
+    if (outcome === "rejected") {
+      await page.waitForTimeout(30_000 - (Date.now() % 30_000) + 500);
+      await tokenField.fill(secondFactorFor());
+      await page.getByRole("button", { name: "Sign in" }).click();
+    }
   }
   await page.waitForURL("**/dashboard");
   sessionCache.set(email, await page.context().cookies());

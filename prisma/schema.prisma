@@ -247,6 +247,9 @@ model InboundEvent {
   @@index([organisationId, processingStatus])
   @@index([organisationId, receivedAt])
   @@index([organisationId, eventType])
+  // Created by 20260731140000_privacy_lifecycle for the retention sweep;
+  // declared here so schema and migration history agree.
+  @@index([payloadRedactedAt, receivedAt])
 }
 
 // ── Operational projections ────────────────────────────────────────
@@ -286,6 +289,9 @@ model Customer {
   @@index([organisationId, emailNormalized])
   @@index([organisationId, phoneNormalized])
   @@index([organisationId, lastInteractionAt])
+  // Created by 20260731140000_privacy_lifecycle for the erasure/restriction
+  // views; declared here so schema and migration history agree.
+  @@index([organisationId, erasedAt])
 }
 
 enum OpportunityStage {

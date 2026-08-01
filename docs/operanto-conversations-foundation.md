@@ -7,7 +7,7 @@ conversations with manual entry and a deterministic simulator channel, fully
 integrated into the existing tenancy, RBAC, audit, and privacy architecture.
 No live provider channels, no AI, no workflow engine, no Growth functionality.
 
-## Data model (migration `20260801080123_conversations_foundation`, additive)
+## Data model (migration `20260801092453_conversations_foundation`, additive)
 
 | Model | Purpose | Notes |
 |---|---|---|
@@ -113,7 +113,11 @@ NODE_OPTIONS="--require ./scripts/preload.cjs" \
   → `OPERANTO_MESSAGE_RETENTION_DAYS` → **365 days**. The 12-month default is
   PROVISIONAL — the production policy requires contractual and legal
   confirmation before activation. Restriction and erasure always take
-  precedence (erasure redacts immediately, regardless of age).
+  precedence: erasure redacts immediately regardless of age, and restriction
+  **pauses disposal** — a restricted customer's messages are held untouched
+  by the sweep until the restriction lifts (Art. 18 requires storage while a
+  dispute runs). The sweep is idempotent (`redactedAt` filter) and epoch-based
+  (UTC-independent day arithmetic).
 
 ## Known limitations / deferred (by design, per the approved plan)
 
@@ -152,7 +156,7 @@ NODE_OPTIONS="--require ./scripts/preload.cjs" \
 
 ## Migration and rollback
 
-`20260801080123_conversations_foundation` is purely additive (new enums, five
+`20260801092453_conversations_foundation` is purely additive (new enums, five
 new tables, two nullable columns, tenancy-scoped uniques). It replays on a
 clean database (CI job + local verification) and applies to the current
 production schema without touching existing rows. Reversal, if ever needed,

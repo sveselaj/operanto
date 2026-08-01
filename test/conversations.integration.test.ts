@@ -241,6 +241,33 @@ describeDb("tenant isolation", () => {
     ).rejects.toThrow("Customer not found in this organisation");
   });
 
+  it("operators cannot read or mutate an unassigned conversation of their own organisation by direct id", async () => {
+    const admin = await makeCtx("org-a", "ADMIN");
+    const operator = await makeCtx("org-a", "OPERATOR");
+    const foreign = await createManualConversation(admin, {
+      counterpartName: "Admin-only case",
+    });
+
+    expect(await getConversation(operator, foreign.id)).toBeNull();
+    await expect(
+      changeConversationStatus(operator, foreign.id, "RESOLVED"),
+    ).rejects.toThrow("Conversation not found");
+    await expect(
+      changeConversationPriority(operator, foreign.id, "HIGH"),
+    ).rejects.toThrow("Conversation not found");
+    await expect(
+      addConversationNote(operator, foreign.id, "operator note"),
+    ).rejects.toThrow("Conversation not found");
+    await expect(
+      addManualMessage(operator, foreign.id, "operator message"),
+    ).rejects.toThrow("Conversation not found");
+
+    // Once assigned, the same operator can work it.
+    await assignConversation(admin, foreign.id, operator.membership.id);
+    expect((await getConversation(operator, foreign.id))?.id).toBe(foreign.id);
+    await addConversationNote(operator, foreign.id, "now mine");
+  });
+
   it("operators see only conversations they are assigned or created", async () => {
     const admin = await makeCtx("org-a", "ADMIN");
     const operator = await makeCtx("org-a", "OPERATOR");
@@ -400,6 +427,46 @@ describeDb("privacy lifecycle", () => {
     });
     expect(longMessages[0]!.body).toBe("long-org message");
     expect(longMessages[0]!.redactedAt).toBeNull();
+  });
+
+  it("retention holds a restricted customer's messages untouched", async () => {
+    const ctx = await makeCtx("org-hold");
+    await db.organisation.update({
+      where: { id: ctx.organisation.id },
+      data: { messageRetentionDays: 30 },
+    });
+    const restricted = await makeCustomer(ctx.organisation.id, {
+      name: "Disputing customer",
+      restrictedAt: new Date(),
+    });
+    const held = await createManualConversation(ctx, { customerId: restricted.id });
+    // Recording is blocked while restricted, so age a pre-restriction message.
+    await db.message.create({
+      data: {
+        organisationId: ctx.organisation.id,
+        conversationId: held.id,
+        direction: "OUTBOUND",
+        senderType: "STAFF",
+        body: "kept while the dispute runs",
+        createdAt: new Date(Date.now() - 90 * 86_400_000),
+      },
+    });
+    const unrestricted = await createManualConversation(ctx, {
+      counterpartName: "Ordinary case",
+      initialMessage: "expires normally",
+    });
+    await db.message.updateMany({
+      where: { conversationId: unrestricted.id },
+      data: { createdAt: new Date(Date.now() - 90 * 86_400_000) },
+    });
+
+    const result = await redactExpiredMessages();
+    expect(result.redacted).toBe(1);
+    const heldMessage = await db.message.findFirst({
+      where: { conversationId: held.id },
+    });
+    expect(heldMessage!.body).toBe("kept while the dispute runs");
+    expect(heldMessage!.redactedAt).toBeNull();
   });
 
   it("unlinking never copies the customer's name onto the conversation", async () => {
