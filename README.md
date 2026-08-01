@@ -61,6 +61,7 @@ Checks: `pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm build`.
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — components, event pipeline, tenancy model
+- [docs/operanto-product-architecture.md](docs/operanto-product-architecture.md) — one external brand, public capability model, naming rules
 - [docs/event-schema.md](docs/event-schema.md) — wire contract with Pronatona
 - [docs/security.md](docs/security.md) — threat model, permission matrix, controls
 - [docs/customer-matching.md](docs/customer-matching.md) — exact-match-only policy
