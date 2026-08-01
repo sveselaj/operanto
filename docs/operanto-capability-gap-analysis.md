@@ -7,8 +7,8 @@ or missing entirely — and what to do with each. No runtime code was changed
 as part of this audit.
 
 Companion documents: `docs/operanto-target-architecture.md` (the architecture
-these findings feed), `docs/operanto-product-architecture.md` (naming policy,
-on PR #4), `docs/architecture.md` (the shipped event pipeline).
+these findings feed), `docs/operanto-product-architecture.md` (naming
+policy), `docs/architecture.md` (the shipped event pipeline).
 
 ## Sources inspected
 
@@ -124,16 +124,55 @@ ordering in §7.
 
 ---
 
-## 6. Questions requiring product-owner decisions
+## 6. Product-owner decisions (approved 2026-08-01)
 
-1. **Commerce scope.** Are catalogue, quoting, business rules, appointments, and document extraction (msync phases B/C/F/G/H) part of Operanto's roadmap, or does Operanto stay focused on conversations + customer operations for the real-estate vertical first? This decides ~40% of the msync branch's fate.
-2. **First live channel + provider strategy.** WhatsApp Cloud vs web-chat widget vs Telegram first? One platform-level Meta app serving all tenants (msync design) or per-tenant apps/BSP? This has compliance and review-process lead times.
-3. **Role model.** Keep the 3-role matrix (ADMIN/SUPERVISOR/OPERATOR) and map approvals onto it, or reintroduce reviewer/client-viewer roles from the prototypes?
-4. **Outbound compliance.** WhatsApp 24-hour window + template rules, consent requirements per market — who owns legal review before any live outbound send?
-5. **AI provisioning.** Anthropic API budget, model tiers, and whether staging defaults to mock mode (prototype supports full mock-mode demos).
-6. **Branch disposition.** After salvage, should `origin/mediasync-communication-layer` be archived in-tree like the legacy prototype, tagged and deleted, or left as-is?
-7. **Growth timing.** The plan defers Growth until Conversations/Workflows are stable — is there marketing pressure to pull brand-voice/content generation earlier (it is self-contained in the legacy prototype)?
-8. **Message retention.** Do conversation payloads get a retention window like `InboundEvent.rawPayload` (30 days) or live indefinitely until erasure?
+The questions raised by this audit were decided as follows. The backlog (§7)
+and `docs/operanto-target-architecture.md` reflect these decisions.
+
+1. **Scope — conversations-first.** Quoting, catalogue, business rules,
+   appointments, document AI, and other commerce-specific prototype
+   functionality are **not** ported during the foundation slices. They
+   remain future vertical capabilities (Nagelista, Pronatona, and other
+   adapters).
+2. **Channels.** Slice 1 uses manual input plus a deterministic simulator.
+   A controlled web-chat channel may follow. The first major live external
+   connector is the **WhatsApp Cloud API**. Telegram is not currently a
+   priority.
+3. **Meta architecture.** One Operanto-managed Meta application; every
+   Operanto organisation connects its own WhatsApp Business Account and
+   phone number. Adapter extensibility for BSP providers is preserved.
+4. **Roles.** The current three-role Organisation/Membership model stays.
+   Granular permissions, assignment rules, and approval states are
+   implemented within it. Reviewer or client-viewer roles are added only
+   when justified by a real use case.
+5. **Outbound controls.** Operanto enforces consent state, applicable
+   template and messaging-window policies, approvals, auditability, and
+   safe failure behaviour. Compliance policy is configurable per channel
+   and per tenant.
+6. **AI.** The provider abstraction is retained; deterministic mock mode
+   remains the default for tests and staging. **OpenAI is the initial
+   production provider** for summarisation, classification, and draft
+   replies — domain code never couples to it directly. Tenant-level model
+   selection, usage limits, and budget controls are required. Other
+   providers can be added behind the same abstraction.
+7. **Prototype branch.** `origin/mediasync-communication-layer` is not
+   altered or deleted during the audit or early implementation work. After
+   all approved reusable components have been transplanted, an immutable
+   archive tag plus remote-branch deletion will be proposed as a separate
+   action.
+8. **Growth stays Slice 6.** BrandProfile, campaign generation, and
+   publishing are not pulled ahead of the Conversations, Customer Context,
+   Workflow, AI Handover, and Channel Adapter foundations.
+9. **Retention.** Configurable per organisation; **12 months is the
+   provisional default for message payloads**, with restriction and
+   erasure requirements taking precedence. Longer-lived audit records
+   carry minimal non-content metadata, never full message bodies. The
+   production policy requires contractual and legal confirmation.
+10. **Opportunity model.** The naming/domain collision is resolved
+    explicitly in the target architecture: the existing `Opportunity`
+    model remains the Pronatona real-estate projection; a general
+    commercial pipeline, if and when built, is a separate bounded model.
+    Incompatible model shapes are never merged under one generic entity.
 
 ## 7. Recommended backlog (vertical slices, in order)
 
@@ -144,7 +183,7 @@ ordering in §7.
 | 2 | `feature/operanto-customer-context` | `CustomerIdentity` (channel handles as a new ladder rung), contextual sidebar (timeline, opportunities, tasks, prior conversations), matching tests. | 1 |
 | 3 | `feature/operanto-conversation-workflows` | Task↔Conversation link (additive), create-task-from-conversation, task progress in timeline. | 1 |
 | 4 | `feature/operanto-ai-handover` | AI provider/service/AIAction port, summarize/classify/draft-reply with approval-gated composer, tool runtime + unified ApprovalRequest, takeover/handling, confidence policy, `ai:run`/`approvals:decide` permissions. Mock mode default. | 1–3 |
-| 5 | `feature/operanto-channel-adapters` | Channel adapter interface, WebhookEvent store + async processing on the InboundEvent pattern, consent + delivery status, first live connector (per decision #2) behind a feature flag. | 1, 4 (for AI-assisted replies) |
+| 5 | `feature/operanto-channel-adapters` | Channel adapter interface, WebhookEvent store + async processing on the InboundEvent pattern, consent + delivery status, WhatsApp Cloud API connector behind a feature flag (decisions 2–3), optional controlled web-chat channel. | 1, 4 (for AI-assisted replies) |
 | 6 | `feature/operanto-growth-foundation` | BrandProfile/BrandVoice, content drafts, campaign model, approval + linkage to conversations/opportunities. | 1–5 stable |
 
 Do not open navigation entries for a capability before its slice ships usable

@@ -97,9 +97,16 @@ interface ConversationChannelAdapter {
 Rules: signature verification takes the resolved connection (per-tenant
 secrets are possible even if v1 uses app-level secrets); an adapter that
 cannot resolve a tenant **rejects** the event — there is no cross-tenant
-fallback lookup. The first adapter is a controlled simulator (manual entry +
-web-chat-style test channel); live connectors (Meta first candidate) follow
-one at a time behind feature flags.
+fallback lookup.
+
+Channel rollout (product-owner decisions 2–3): Slice 1 ships manual entry
+plus a deterministic simulator adapter; a controlled web-chat channel may
+follow; the first live external connector is the **WhatsApp Cloud API**,
+served by **one Operanto-managed Meta application** with each organisation
+connecting its own WhatsApp Business Account and phone number
+(`ChannelConnection` holds the per-org WABA id, phone-number id, and
+encrypted tokens). The adapter contract stays provider-neutral so BSP
+providers can be added later. Telegram is not currently a priority.
 
 ### Ingestion pipeline (mirrors the Pronatona pipeline)
 
@@ -113,8 +120,14 @@ after()/cron: atomic claim → adapter.receiveEvents → identity ladder
   → retries → DEAD_LETTER + admin retry UI
 ```
 
-Consent (`Consent` model, STOP/START keywords) is checked before every
-outbound send; sends record delivery status transitions monotonically.
+Outbound controls (decision 5): every send passes consent state, the
+channel's template and messaging-window policy (e.g. WhatsApp's 24-hour
+window), the approval gate where policy requires one, and audit logging —
+and fails safe (a policy or connector failure never drops a message
+silently or sends without a check). Compliance policy is configurable per
+channel and per tenant. Consent (`Consent` model, STOP/START keywords) is
+checked before every outbound send; sends record delivery status
+transitions monotonically.
 
 ## Operanto Workflows
 
@@ -134,8 +147,16 @@ escalations, status transitions, business events, auditability.
 - `Escalation` — later: time/condition rules that flag conversations, tasks,
   or approvals; built with the notification decision.
 - `WorkflowDefinition/Step/Instance/Transition` — later, on demonstrated
-  need; the pure evaluator (`workflow-eval.ts`) ports first. `Opportunity`
-  stays the commercial spine; `Conversation` links to it, never replaces it.
+  need; the pure evaluator (`workflow-eval.ts`) ports first.
+- **The `Opportunity` collision is resolved by separation, not merging**
+  (decision 10). The existing `Opportunity` model is, and remains, the
+  Pronatona real-estate projection (stage enum, `sourceStage`,
+  `PropertyContext`, event-driven upserts). The prototype's `Opportunity`
+  (open/won/lost pipeline with requirements, quotes, workflow instances) is
+  a *different* bounded concept — a general commercial pipeline — and if it
+  is ever built it arrives as its own model under its own name. Incompatible
+  shapes are never merged under one generic entity. `Conversation` links to
+  the existing `Opportunity` where relevant and never replaces it.
 - `OperationalEvent` — **not a new table**: `Activity` (domain timeline) +
   `AuditEvent` (compliance) remain the two event stores.
 
@@ -152,7 +173,17 @@ Architecture (ported from the legacy prototype, adapted to main):
   Zod-validated forced-tool structured output with one retry; every call
   persists an `AIAction` row (model, `prompt@version`, PII-trimmed input
   context, output, confidence, status). Mock mode (`AI_PROVIDER=mock` or no
-  API key) keeps every feature demoable and testable offline.
+  API key) keeps every feature demoable and testable offline, and **remains
+  the default for tests and staging** (decision 6).
+- Provider strategy (decision 6): the provider abstraction is the boundary —
+  domain code calls tasks, never a vendor SDK. **OpenAI is the initial
+  production provider** for summarisation, classification, and draft
+  replies; the prototype's Anthropic adapter shows the adapter shape and
+  further providers plug in behind the same interface. Tenant-level model
+  selection, usage limits, and budget controls are part of the AI layer's
+  contract: per-organisation provider/model configuration and metered usage
+  with enforced caps (refuse-with-explanation on budget exhaustion, never
+  silent degradation).
 - Typed tool runtime — the **only** way AI produces side effects: Zod input
   validation → RBAC check with the *acting human's* context → approval
   policy (deny-by-default; `always`-gated for outbound/irreversible actions)
@@ -194,24 +225,32 @@ Built last, on the shared spine — **not an isolated content generator**:
   a product decision): `conversations:view_all | view_assigned | reply |
   assign | manage`, `channels:manage`, `ai:run`, `approvals:decide`,
   `growth:manage`, `templates:manage`.
-- **Privacy**: `eraseCustomer` gains surfaces — Conversation subject/summary,
-  Message bodies + attachments (blob deletion), ConversationNote, AIAction
-  input/output, CustomerIdentity. Message payload retention per-org
-  (default: retain until erasure; raw `ChannelInboundEvent` payloads follow
-  the 30-day redaction pattern). Consent records are kept as compliance
-  evidence, like audit events.
+- **Privacy** (decision 9): `eraseCustomer` gains surfaces — Conversation
+  subject/summary, Message bodies + attachments (blob deletion),
+  ConversationNote, AIAction input/output, CustomerIdentity. Message-payload
+  retention is configurable per organisation with a **provisional default of
+  12 months**; restriction and erasure requirements always take precedence
+  over retention. Raw `ChannelInboundEvent` payloads follow the existing
+  30-day redaction pattern. Longer-lived audit records carry minimal
+  non-content metadata — never full message bodies. The production retention
+  policy requires contractual and legal confirmation before launch. Consent
+  records are kept as compliance evidence, like audit events.
 - **Navigation end state** (each entry appears only when usable): Dashboard,
   Conversations, Customers, Opportunities, Tasks, Growth, Activity,
   Integrations, Settings, Audit log.
-- **Legacy branch disposition**: after salvage, archive or tag
-  `origin/mediasync-communication-layer` (product-owner decision, gap
-  analysis §6.6); its migrations are never replayed — all schema arrives as
-  fresh additive migrations on main.
+- **Legacy branch disposition** (decision 7): `origin/mediasync-communication-layer`
+  is not altered or deleted during audit or early implementation. Once all
+  approved reusable components are transplanted, an immutable archive tag
+  plus remote-branch deletion will be proposed as a separate action. Its
+  schema is never replayed — all schema arrives as fresh additive migrations
+  on main.
 
 ## Explicit non-goals (now)
 
 Autonomous outbound AI replies; many simultaneous half-working channel
 integrations; a visual workflow builder; group/multi-participant
 conversations; per-message realtime transport (poll/refresh first); the
-commerce suite (quoting, catalogue, appointments, document extraction)
-pending the product-scope decision.
+commerce suite (quoting, catalogue, business rules, appointments, document
+extraction) — deferred by decision 1 as future vertical capabilities
+(Nagelista, Pronatona, and other adapters); Telegram and Infobip connectors
+(deprioritised by decision 2).
