@@ -44,7 +44,11 @@ export type Permission =
   /** Change tenant AI configuration (enable, mode, model, budgets). */
   | "ai:configure"
   | "approvals:read"
-  | "approvals:decide";
+  | "approvals:decide"
+  /** Channel connection administration and health. */
+  | "channels:manage"
+  /** Manual consent corrections (compliance-sensitive). */
+  | "consent:manage";
 
 const MATRIX: Record<MembershipRole, Permission[]> = {
   ADMIN: [
@@ -77,6 +81,8 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "ai:configure",
     "approvals:read",
     "approvals:decide",
+    "channels:manage",
+    "consent:manage",
   ],
   SUPERVISOR: [
     "customers:view_all",
@@ -102,6 +108,7 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "ai:read",
     "approvals:read",
     "approvals:decide",
+    "consent:manage",
   ],
   OPERATOR: [
     "customers:view_assigned",

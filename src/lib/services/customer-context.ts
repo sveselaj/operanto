@@ -30,6 +30,7 @@ export async function getCustomerContext(
         orderBy: { createdAt: "asc" },
         take: 10,
       },
+      consents: { orderBy: { channelType: "asc" }, take: 10 },
     },
   });
   if (!customer) return null;

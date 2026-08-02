@@ -76,6 +76,17 @@ describe("AI and approval permissions", () => {
   });
 });
 
+describe("channel and consent permissions", () => {
+  it("channel administration is ADMIN-only; consent corrections supervisor+", () => {
+    expect(can("ADMIN", "channels:manage")).toBe(true);
+    expect(can("SUPERVISOR", "channels:manage")).toBe(false);
+    expect(can("OPERATOR", "channels:manage")).toBe(false);
+    expect(can("ADMIN", "consent:manage")).toBe(true);
+    expect(can("SUPERVISOR", "consent:manage")).toBe(true);
+    expect(can("OPERATOR", "consent:manage")).toBe(false);
+  });
+});
+
 describe("requirePermission", () => {
   it("throws ForbiddenError with the permission name", () => {
     expect(() => requirePermission("OPERATOR", "members:manage")).toThrow(
