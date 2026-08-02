@@ -172,7 +172,8 @@ export class WhatsAppCloudAdapter implements ConversationChannelAdapter {
   verifySignature(
     headers: Headers,
     rawBody: string,
-    _connection: ChannelConnection | null,
+    // Deployment-level secret — the connection is deliberately unused.
+    _connection: ChannelConnection | null, // eslint-disable-line @typescript-eslint/no-unused-vars
   ): boolean {
     const secret = process.env.META_APP_SECRET;
     if (!secret) return false;

@@ -7,6 +7,7 @@ import {
   setWhatsAppStageGates,
   verifyWhatsAppConnection,
 } from "@/lib/services/whatsapp-connection";
+import { createTemplate, setTemplateStatus } from "@/lib/services/templates";
 
 export type WhatsAppFormState = { error: string | null; notice: string | null };
 
@@ -53,5 +54,23 @@ export async function setStageGateAction(formData: FormData): Promise<void> {
 export async function verifyConnectionAction(formData: FormData): Promise<void> {
   const ctx = await requireOrg();
   await verifyWhatsAppConnection(ctx, String(formData.get("connectionId") ?? ""));
+  revalidatePath("/integrations");
+}
+
+export async function createTemplateAction(formData: FormData): Promise<void> {
+  const ctx = await requireOrg();
+  await createTemplate(ctx, {
+    name: String(formData.get("name") ?? ""),
+    language: String(formData.get("language") ?? ""),
+    body: String(formData.get("body") ?? ""),
+  });
+  revalidatePath("/integrations");
+}
+
+export async function setTemplateStatusAction(formData: FormData): Promise<void> {
+  const ctx = await requireOrg();
+  const status = String(formData.get("status") ?? "");
+  if (status !== "APPROVED" && status !== "REJECTED" && status !== "PENDING") return;
+  await setTemplateStatus(ctx, String(formData.get("templateId") ?? ""), status);
   revalidatePath("/integrations");
 }

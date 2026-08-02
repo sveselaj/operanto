@@ -12,7 +12,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/format";
 import { WhatsAppConnectForm } from "./whatsapp-connect-form";
-import { setStageGateAction, verifyConnectionAction } from "./whatsapp-actions";
+import {
+  createTemplateAction,
+  setStageGateAction,
+  setTemplateStatusAction,
+  verifyConnectionAction,
+} from "./whatsapp-actions";
+import { Input } from "@/components/ui/input";
 
 export const metadata: Metadata = { title: "Integrations" };
 
@@ -24,6 +30,12 @@ export default async function IntegrationsPage() {
     ? await prisma.channelConnection.findMany({
         where: scope(ctx),
         orderBy: [{ type: "asc" }, { displayName: "asc" }],
+      })
+    : [];
+  const templates = can(ctx.membership.role, "templates:manage")
+    ? await prisma.messageTemplate.findMany({
+        where: scope(ctx),
+        orderBy: [{ name: "asc" }, { language: "asc" }],
       })
     : [];
 
@@ -129,6 +141,77 @@ export default async function IntegrationsPage() {
               </div>
             ))}
           </div>
+        </div>
+      ) : null}
+
+      {can(ctx.membership.role, "templates:manage") ? (
+        <div className="mt-6 max-w-xl">
+          <h2 className="mb-2 text-sm font-semibold">WhatsApp message templates</h2>
+          <Card>
+            <CardContent className="space-y-3 pt-5">
+              <p className="text-xs text-muted-foreground">
+                Mirror templates approved in Meta Business Manager. Only APPROVED
+                rows can be sent outside the 24-hour service window, and only by
+                selection — never by client-provided name.
+              </p>
+              {templates.length > 0 ? (
+                <div className="divide-y divide-border rounded-md border border-border">
+                  {templates.map((template) => (
+                    <div
+                      key={template.id}
+                      className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium">
+                          {template.name}{" "}
+                          <span className="text-xs text-muted-foreground">
+                            ({template.language})
+                          </span>
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {template.body}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Badge
+                          variant={template.status === "APPROVED" ? "default" : "outline"}
+                        >
+                          {template.status}
+                        </Badge>
+                        {template.status !== "APPROVED" ? (
+                          <form action={setTemplateStatusAction}>
+                            <input type="hidden" name="templateId" value={template.id} />
+                            <input type="hidden" name="status" value="APPROVED" />
+                            <Button type="submit" variant="outline" size="sm">
+                              Mark approved
+                            </Button>
+                          </form>
+                        ) : (
+                          <form action={setTemplateStatusAction}>
+                            <input type="hidden" name="templateId" value={template.id} />
+                            <input type="hidden" name="status" value="REJECTED" />
+                            <Button type="submit" variant="outline" size="sm">
+                              Revoke
+                            </Button>
+                          </form>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <form action={createTemplateAction} className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <Input name="name" placeholder="Template name" required autoComplete="off" />
+                  <Input name="language" placeholder="Language (e.g. sq, en_US)" required autoComplete="off" />
+                </div>
+                <Input name="body" placeholder="Template body (preview text)" required autoComplete="off" />
+                <Button type="submit" variant="outline" size="sm">
+                  Add template
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
         </div>
       ) : null}
 

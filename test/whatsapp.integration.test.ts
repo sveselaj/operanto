@@ -30,6 +30,12 @@ const { eraseCustomer } = await import("@/lib/services/privacy");
 const { connectWhatsApp, setWhatsAppStageGates } = await import(
   "@/lib/services/whatsapp-connection"
 );
+const { sendWhatsAppMessage, retryWhatsAppSend } = await import(
+  "@/lib/services/whatsapp-send"
+);
+const { createTemplate, setTemplateStatus } = await import("@/lib/services/templates");
+const { addManualMessage } = await import("@/lib/services/conversations");
+const { encryptSecret } = await import("@/lib/crypto");
 
 async function makeCtx(slug: string, role: "ADMIN" | "OPERATOR" = "ADMIN") {
   const organisation =
@@ -383,5 +389,370 @@ describeDb("whatsapp connection administration", () => {
     expect(
       await db.auditEvent.count({ where: { eventType: "channel.stage_gates_updated" } }),
     ).toBe(1);
+  });
+});
+
+describeDb("whatsapp explicit outbound", () => {
+  const realFetch = globalThis.fetch;
+  let graphCalls: Array<{ url: string; body: Record<string, unknown> }>;
+  let graphResponse: () => Response;
+
+  function stubGraph() {
+    graphCalls = [];
+    graphResponse = () =>
+      new Response(
+        JSON.stringify({ messages: [{ id: `wamid.out-${graphCalls.length}` }] }),
+        { status: 200 },
+      );
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      graphCalls.push({
+        url: String(url),
+        body: init?.body ? JSON.parse(String(init.body)) : {},
+      });
+      return graphResponse();
+    }) as unknown as typeof fetch;
+  }
+
+  async function outboundSetup(over: { outboundEnabled?: boolean } = {}) {
+    vi.stubEnv("OPERANTO_WHATSAPP_OUTBOUND_ENABLED", "1");
+    stubGraph();
+    const ctx = await makeCtx("org-a");
+    const connection = await db.channelConnection.create({
+      data: {
+        organisationId: ctx.organisation.id,
+        type: "WHATSAPP",
+        displayName: "WhatsApp +355",
+        status: "ACTIVE",
+        wabaId: "waba-out",
+        phoneNumberId: "pn-out",
+        displayPhoneNumber: "+355 69",
+        accessTokenEncrypted: encryptSecret("live-token"),
+        inboundEnabled: true,
+        outboundEnabled: over.outboundEnabled ?? true,
+      },
+    });
+    const customer = await db.customer.create({
+      data: { organisationId: ctx.organisation.id, name: "Recipient" },
+    });
+    const inbound = await ingest(waText("pn-out", { from: "355690009999" }));
+    await linkConversationCustomer(ctx, inbound.conversationId!, customer.id);
+    return { ctx, connection, customer, conversationId: inbound.conversationId! };
+  }
+
+  afterAll(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("outbound is disabled by default at BOTH levels", async () => {
+    const { ctx, connection, conversationId } = await outboundSetup();
+    vi.stubEnv("OPERANTO_WHATSAPP_OUTBOUND_ENABLED", "");
+    await expect(
+      sendWhatsAppMessage(ctx, {
+        conversationId,
+        body: "hi",
+        templateId: null,
+        idempotencyKey: "k-flag",
+      }),
+    ).rejects.toThrow(/not enabled in this deployment/);
+
+    vi.stubEnv("OPERANTO_WHATSAPP_OUTBOUND_ENABLED", "1");
+    await db.channelConnection.update({
+      where: { id: connection.id },
+      data: { outboundEnabled: false },
+    });
+    await expect(
+      sendWhatsAppMessage(ctx, {
+        conversationId,
+        body: "hi",
+        templateId: null,
+        idempotencyKey: "k-conn",
+      }),
+    ).rejects.toThrow(/not enabled for this connection/);
+    expect(graphCalls).toHaveLength(0);
+    vi.unstubAllEnvs();
+  });
+
+  it("an explicit allowed send transmits, records SENT and audits ids only", async () => {
+    const { ctx, conversationId, customer } = await outboundSetup();
+    // A pre-existing RECORDED draft must never be touched by sending.
+    const recorded = await addManualMessage(ctx, conversationId, "internal record");
+    const result = await sendWhatsAppMessage(ctx, {
+      conversationId,
+      body: "Your order ships tomorrow",
+      templateId: null,
+      idempotencyKey: "k-send-1",
+    });
+    expect(result.deliveryStatus).toBe("SENT");
+    expect(graphCalls).toHaveLength(1);
+    expect(graphCalls[0].url).toContain("/pn-out/messages");
+    expect(graphCalls[0].body).toMatchObject({
+      to: "355690009999",
+      type: "text",
+      text: { body: "Your order ships tomorrow" },
+    });
+
+    const message = await db.message.findUniqueOrThrow({ where: { id: result.messageId } });
+    expect(message.deliveryStatus).toBe("SENT");
+    expect(message.providerMessageId).toBe("wamid.out-1");
+    expect(message.direction).toBe("OUTBOUND");
+    const recordedAfter = await db.message.findUniqueOrThrow({
+      where: { id: recorded.id },
+    });
+    expect(recordedAfter.deliveryStatus).toBe("RECORDED");
+
+    const audits = await db.auditEvent.findMany({ where: { eventType: "message.sent" } });
+    expect(audits).toHaveLength(1);
+    expect(JSON.stringify(audits[0])).not.toContain("Your order ships tomorrow");
+    expect(
+      await db.activity.count({
+        where: { activityType: "conversation.outbound_sent", customerId: customer.id },
+      }),
+    ).toBe(1);
+    vi.unstubAllEnvs();
+  });
+
+  it("duplicate submissions with the same idempotency key send exactly once", async () => {
+    const { ctx, conversationId } = await outboundSetup();
+    await sendWhatsAppMessage(ctx, {
+      conversationId,
+      body: "once",
+      templateId: null,
+      idempotencyKey: "k-dup",
+    });
+    await expect(
+      sendWhatsAppMessage(ctx, {
+        conversationId,
+        body: "once",
+        templateId: null,
+        idempotencyKey: "k-dup",
+      }),
+    ).rejects.toThrow(/already submitted/);
+    expect(graphCalls).toHaveLength(1);
+    expect(await db.message.count({ where: { direction: "OUTBOUND" } })).toBe(1);
+    vi.unstubAllEnvs();
+  });
+
+  it("outside the window: free text refused, approved template + opt-in accepted", async () => {
+    const { ctx, conversationId, customer } = await outboundSetup();
+    await db.conversation.update({
+      where: { id: conversationId },
+      data: { lastInboundAt: new Date(Date.now() - 30 * 3600_000) },
+    });
+    await expect(
+      sendWhatsAppMessage(ctx, {
+        conversationId,
+        body: "free text",
+        templateId: null,
+        idempotencyKey: "k-window-1",
+      }),
+    ).rejects.toThrow(/service window has closed/);
+
+    const template = await createTemplate(ctx, {
+      name: "shipping_update",
+      language: "sq",
+      body: "Njoftim per dergesen tuaj.",
+    });
+    // PENDING template is not selectable.
+    await expect(
+      sendWhatsAppMessage(ctx, {
+        conversationId,
+        body: null,
+        templateId: template.id,
+        idempotencyKey: "k-window-2",
+      }),
+    ).rejects.toThrow(/not found or not approved/);
+    await setTemplateStatus(ctx, template.id, "APPROVED");
+
+    // Approved template but no opt-in consent — still refused.
+    await expect(
+      sendWhatsAppMessage(ctx, {
+        conversationId,
+        body: null,
+        templateId: template.id,
+        idempotencyKey: "k-window-3",
+      }),
+    ).rejects.toThrow(/require opt-in consent/);
+
+    await db.consent.create({
+      data: {
+        organisationId: ctx.organisation.id,
+        customerId: customer.id,
+        channelType: "WHATSAPP",
+        status: "OPTED_IN",
+        source: "manual",
+      },
+    });
+    const result = await sendWhatsAppMessage(ctx, {
+      conversationId,
+      body: null,
+      templateId: template.id,
+      idempotencyKey: "k-window-4",
+    });
+    expect(result.deliveryStatus).toBe("SENT");
+    expect(graphCalls.at(-1)?.body).toMatchObject({
+      type: "template",
+      template: { name: "shipping_update", language: { code: "sq" } },
+    });
+    vi.unstubAllEnvs();
+  });
+
+  it("refuses opted-out, restricted and erased customers", async () => {
+    const { ctx, conversationId, customer } = await outboundSetup();
+    await db.consent.create({
+      data: {
+        organisationId: ctx.organisation.id,
+        customerId: customer.id,
+        channelType: "WHATSAPP",
+        status: "OPTED_OUT",
+        source: "inbound_keyword",
+      },
+    });
+    await expect(
+      sendWhatsAppMessage(ctx, {
+        conversationId,
+        body: "x",
+        templateId: null,
+        idempotencyKey: "k-consent",
+      }),
+    ).rejects.toThrow(/opted out/);
+
+    await db.consent.deleteMany({});
+    await db.customer.update({
+      where: { id: customer.id },
+      data: { restrictedAt: new Date() },
+    });
+    await expect(
+      sendWhatsAppMessage(ctx, {
+        conversationId,
+        body: "x",
+        templateId: null,
+        idempotencyKey: "k-restricted",
+      }),
+    ).rejects.toThrow(/restricted/);
+
+    await db.customer.update({
+      where: { id: customer.id },
+      data: { restrictedAt: null, erasedAt: new Date() },
+    });
+    await expect(
+      sendWhatsAppMessage(ctx, {
+        conversationId,
+        body: "x",
+        templateId: null,
+        idempotencyKey: "k-erased",
+      }),
+    ).rejects.toThrow(/erased/);
+    expect(graphCalls).toHaveLength(0);
+    vi.unstubAllEnvs();
+  });
+
+  it("denies cross-tenant sends, foreign templates and unassigned operators", async () => {
+    const { ctx, conversationId } = await outboundSetup();
+    const foreign = await makeCtx("org-b");
+    await expect(
+      sendWhatsAppMessage(foreign, {
+        conversationId,
+        body: "x",
+        templateId: null,
+        idempotencyKey: "k-foreign",
+      }),
+    ).rejects.toThrow(/not found/);
+
+    const foreignTemplate = await createTemplate(foreign, {
+      name: "other_org",
+      language: "en",
+      body: "not yours",
+    });
+    await setTemplateStatus(foreign, foreignTemplate.id, "APPROVED");
+    await db.conversation.update({
+      where: { id: conversationId },
+      data: { lastInboundAt: new Date(Date.now() - 30 * 3600_000) },
+    });
+    await expect(
+      sendWhatsAppMessage(ctx, {
+        conversationId,
+        body: null,
+        templateId: foreignTemplate.id,
+        idempotencyKey: "k-foreign-tpl",
+      }),
+    ).rejects.toThrow(/not found or not approved/);
+
+    const operator = await makeCtx("org-a", "OPERATOR");
+    await expect(
+      sendWhatsAppMessage(operator, {
+        conversationId,
+        body: "x",
+        templateId: null,
+        idempotencyKey: "k-operator",
+      }),
+    ).rejects.toThrow(/not found/);
+    expect(graphCalls).toHaveLength(0);
+    vi.unstubAllEnvs();
+  });
+
+  it("provider delivery callbacks advance monotonically and never regress", async () => {
+    const { ctx, conversationId, connection } = await outboundSetup();
+    const result = await sendWhatsAppMessage(ctx, {
+      conversationId,
+      body: "track me",
+      templateId: null,
+      idempotencyKey: "k-status",
+    });
+    const message = await db.message.findUniqueOrThrow({ where: { id: result.messageId } });
+    const wamid = message.providerMessageId!;
+
+    const statusHook = (status: string) =>
+      waWebhook("pn-out", { statuses: [{ id: wamid, status }] });
+    await ingest(statusHook("delivered"));
+    await ingest(statusHook("read"));
+    // A late, out-of-order "sent" must not regress READ.
+    await ingest(statusHook("sent"));
+    const finalState = await db.message.findUniqueOrThrow({ where: { id: message.id } });
+    expect(finalState.deliveryStatus).toBe("READ");
+
+    const health = await db.channelConnection.findUniqueOrThrow({
+      where: { id: connection.id },
+    });
+    expect(health.lastSuccessfulAt).not.toBeNull();
+    vi.unstubAllEnvs();
+  });
+
+  it("provider failure normalizes, preserves manual flows, and only explicit retry resends", async () => {
+    const { ctx, conversationId } = await outboundSetup();
+    graphResponse = () =>
+      new Response(
+        JSON.stringify({ error: { code: 131047, type: "OAuthException", message: "secret detail" } }),
+        { status: 400 },
+      );
+    const failed = await sendWhatsAppMessage(ctx, {
+      conversationId,
+      body: "will fail",
+      templateId: null,
+      idempotencyKey: "k-fail",
+    });
+    expect(failed.deliveryStatus).toBe("FAILED");
+    const message = await db.message.findUniqueOrThrow({ where: { id: failed.messageId } });
+    expect(message.errorMessage).toContain("provider_rejected");
+    expect(message.errorMessage).not.toContain("secret detail");
+
+    // Manual Operanto functionality is unaffected by provider failure.
+    const manual = await addManualMessage(ctx, conversationId, "manual note still works");
+    expect(manual.deliveryStatus).toBe("RECORDED");
+
+    // The failed row is FAILED — provider callbacks cannot move it, only the
+    // explicit human retry may.
+    graphResponse = () =>
+      new Response(JSON.stringify({ messages: [{ id: "wamid.retry-1" }] }), { status: 200 });
+    const retried = await retryWhatsAppSend(ctx, failed.messageId);
+    expect(retried.deliveryStatus).toBe("SENT");
+    const after = await db.message.findUniqueOrThrow({ where: { id: failed.messageId } });
+    expect(after.deliveryStatus).toBe("SENT");
+    expect(after.providerMessageId).toBe("wamid.retry-1");
+
+    // Retry is idempotent: a second retry on a non-FAILED message refuses.
+    await expect(retryWhatsAppSend(ctx, failed.messageId)).rejects.toThrow(
+      /No retryable message/,
+    );
+    vi.unstubAllEnvs();
   });
 });
