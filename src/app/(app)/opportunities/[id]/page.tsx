@@ -53,6 +53,13 @@ export default async function OpportunityDetailPage({
         ) : null}
       </PageHeader>
 
+      {opportunity.customer.restrictedAt ? (
+        <p className="mb-4 rounded-md border border-warning/40 bg-warning/10 px-4 py-2 text-sm">
+          Processing is restricted for this customer. Do not contact them or act
+          on their data while the restriction is in place.
+        </p>
+      ) : null}
+
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Left column: customer + property + inquiry */}
         <div className="space-y-4">

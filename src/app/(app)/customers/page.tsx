@@ -60,6 +60,16 @@ export default async function CustomersPage({
                     >
                       {customer.name ?? "Unnamed"}
                     </Link>
+                    {customer.restrictedAt ? (
+                      <span className="ml-2 rounded-full border border-warning/40 px-2 py-0.5 text-[11px] text-warning">
+                        restricted
+                      </span>
+                    ) : null}
+                    {customer.erasedAt ? (
+                      <span className="ml-2 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
+                        erased
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-4 py-2.5">{customer.email ?? "—"}</td>
                   <td className="px-4 py-2.5">{customer.phone ?? "—"}</td>

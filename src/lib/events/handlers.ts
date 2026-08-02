@@ -373,6 +373,23 @@ async function handleLeadCreated(
       });
     }
 
+    // Processing restriction (GDPR Art. 18): the event is still recorded —
+    // suppressing the record would lose history — but no new work is created
+    // telling somebody to contact a person who asked us to stop.
+    const restricted = await tx.customer.findFirst({
+      where: { id: match.customerId, restrictedAt: { not: null } },
+      select: { id: true },
+    });
+    if (restricted) {
+      await addActivityOnce(tx, event, {
+        activityType: "processing.restricted_skip",
+        actorType: "SYSTEM",
+        opportunityId: opportunity.id,
+        customerId: match.customerId,
+        summary: "Follow-up suppressed: processing is restricted for this customer",
+      });
+    }
+
     // Follow-up task, exactly once per opportunity.
     const openFollowUp = await tx.task.findFirst({
       where: {
@@ -382,7 +399,7 @@ async function handleLeadCreated(
       },
       select: { id: true },
     });
-    if (!openFollowUp && !existing) {
+    if (!openFollowUp && !existing && !restricted) {
       const dueAt = new Date(
         event.occurredAt.getTime() + FOLLOW_UP_SLA_HOURS * 3_600_000,
       );

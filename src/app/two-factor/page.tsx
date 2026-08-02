@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { requireOrg } from "@/lib/org-context";
+import { requireOrgAllowingEnrolment } from "@/lib/org-context";
 import {
   roleRequiresTwoFactor,
   twoFactorStatus,
@@ -17,7 +17,7 @@ export const metadata: Metadata = { title: "Set up two-factor authentication" };
  * users here until they enrol, so hosting enrolment inside it would loop.
  */
 export default async function TwoFactorSetupPage() {
-  const ctx = await requireOrg();
+  const ctx = await requireOrgAllowingEnrolment();
   const status = await twoFactorStatus(ctx.user.id);
   const required = roleRequiresTwoFactor(ctx.membership.role);
 

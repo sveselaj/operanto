@@ -50,6 +50,11 @@ export async function processInboundEvent(
           : []),
       ],
       attemptCount: { lt: MAX_ATTEMPTS },
+      // A redacted payload cannot be replayed: the personal fields are gone,
+      // so processing it would project a customer built from nulls. Retention
+      // redacts by age regardless of status, so this gate is what keeps the
+      // two mechanisms from corrupting each other.
+      payloadRedactedAt: null,
     },
     data: { processingStatus: "PROCESSING", attemptCount: { increment: 1 } },
   });

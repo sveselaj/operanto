@@ -2,7 +2,8 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { MembershipRole, User } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { decryptSecret, encryptSecret, safeEqual } from "@/lib/crypto";
+import { identifierKey, rateLimit } from "@/lib/rate-limit";
+import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   generateRecoveryCodes,
   generateTotpSecret,
@@ -107,31 +108,47 @@ export async function verifySecondFactor(
   const token = submitted.trim();
   if (!token) return false;
 
+  // A correct password plus an unlimited number of 6-digit guesses is not two
+  // factors. Limited here rather than only on the login route, so every caller
+  // (including disable) is covered. Sensitive: refuses rather than degrades if
+  // the shared backend is down.
+  const attempts = await rateLimit(
+    `2fa:user:${identifierKey(user.id)}`,
+    10,
+    15 * 60_000,
+    { sensitive: true },
+  );
+  if (!attempts.allowed) return false;
+
   const totp = verifyTotp(decryptSecret(user.totpSecretEncrypted), token);
   if (totp.valid && totp.counter !== undefined) {
-    if (user.totpLastCounter !== null && BigInt(totp.counter) <= user.totpLastCounter) {
-      // Already used — a replay inside the validity window.
-      return false;
-    }
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { totpLastCounter: BigInt(totp.counter) },
+    // Atomic claim, not check-then-act: two requests presenting the same code
+    // at the same moment would both pass a read-then-write guard, which is
+    // precisely the replay this is meant to stop. Only the request whose
+    // conditional UPDATE matches a row wins.
+    const counter = BigInt(totp.counter);
+    const claimed = await prisma.user.updateMany({
+      where: {
+        id: user.id,
+        OR: [{ totpLastCounter: null }, { totpLastCounter: { lt: counter } }],
+      },
+      data: { totpLastCounter: counter },
     });
-    return true;
+    return claimed.count === 1;
   }
 
-  // Recovery code: constant-time compare against each stored hash, then burn.
+  // Recovery code. array_remove is evaluated against the CURRENT row inside
+  // the statement, so two different codes consumed concurrently cannot
+  // resurrect one another — which read-modify-write of the whole array does.
+  // The `= ANY(...)` guard means the same code twice matches only once.
   const candidate = hashRecoveryCode(token);
-  const match = user.recoveryCodeHashes.find((stored) => safeEqual(stored, candidate));
-  if (!match) return false;
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      recoveryCodeHashes: user.recoveryCodeHashes.filter((hash) => hash !== match),
-    },
-  });
-  return true;
+  const consumed = await prisma.$executeRaw`
+    UPDATE "User"
+    SET "recoveryCodeHashes" = array_remove("recoveryCodeHashes", ${candidate})
+    WHERE "id" = ${user.id}
+      AND ${candidate} = ANY("recoveryCodeHashes")
+  `;
+  return consumed === 1;
 }
 
 /**
@@ -141,7 +158,15 @@ export async function verifySecondFactor(
 export async function disableTwoFactor(
   userId: string,
   currentToken: string,
+  role: MembershipRole,
 ): Promise<void> {
+  // The UI hides the control for these roles; that is presentation, not a
+  // control. A server action is a public endpoint.
+  if (roleRequiresTwoFactor(role)) {
+    throw new Error(
+      "Your role requires two-factor authentication; it cannot be turned off.",
+    );
+  }
   const verified = await verifySecondFactor(userId, currentToken);
   if (!verified) throw new Error("Enter a valid code to turn off two-factor.");
   await prisma.user.update({

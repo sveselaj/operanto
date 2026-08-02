@@ -75,12 +75,43 @@ export const getOrgContext = cache(async (): Promise<OrgContext | null> => {
   };
 });
 
-/** Resolve the org context or redirect to /login. For pages and layouts. */
+/**
+ * Resolve the org context or redirect to /login, and refuse privileged roles
+ * that have not enrolled a second factor.
+ *
+ * Enforcement lives here, not in a layout: a layout guards rendering, while
+ * every Server Action is a public POST endpoint that never runs it. Since
+ * every action already calls requireOrg, this is the one place that covers
+ * both.
+ */
 export const requireOrg = cache(async (): Promise<OrgContext> => {
+  const ctx = await requireOrgAllowingEnrolment();
+  if (await twoFactorEnrolmentOutstanding(ctx)) redirect("/two-factor");
+  return ctx;
+});
+
+/**
+ * The same check WITHOUT the two-factor gate — for the enrolment screen and
+ * its actions only, which would otherwise redirect to themselves forever.
+ */
+export const requireOrgAllowingEnrolment = cache(async (): Promise<OrgContext> => {
   const ctx = await getOrgContext();
   if (!ctx) redirect("/login");
   return ctx;
 });
+
+/** True when this membership's role requires a second factor and none is active. */
+export async function twoFactorEnrolmentOutstanding(
+  ctx: OrgContext,
+): Promise<boolean> {
+  const { roleRequiresTwoFactor } = await import("@/lib/services/two-factor");
+  if (!roleRequiresTwoFactor(ctx.membership.role)) return false;
+  const user = await prisma.user.findUnique({
+    where: { id: ctx.user.id },
+    select: { totpConfirmedAt: true },
+  });
+  return !user?.totpConfirmedAt;
+}
 
 /** List of active memberships for the org switcher. */
 export const listMyOrganisations = cache(async () => {

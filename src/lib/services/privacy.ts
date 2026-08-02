@@ -113,11 +113,13 @@ export async function eraseCustomer(
         });
       }
 
-      // 4. Task descriptions are seeded with the customer's message.
+      // 4. Tasks. The TITLE matters as much as the description: machine
+      //    titles are generic, but staff type free text there ("Call Arta on
+      //    +383…"), and it renders on /tasks next to the erased customer.
       if (opportunityIds.length > 0) {
         await tx.task.updateMany({
           where: { ...scope(ctx), opportunityId: { in: opportunityIds } },
-          data: { description: null },
+          data: { title: ERASED_TEXT, description: null },
         });
       }
 
@@ -156,18 +158,48 @@ export async function eraseCustomer(
         data: { displayName: null, externalRef: null },
       });
 
-      // 6. The raw inbound events — a verbatim copy of everything received.
-      //    Matched by the source lead ids this customer's opportunities came
-      //    from, since that is the only link back to the originating event.
+      // 6. The source lead id is a foreign key straight back to the person in
+      //    Pronatona. Clearing the payload copy while leaving it on the
+      //    projection would defeat the whole exercise — and it would also let
+      //    a later event match the tombstone by source id and refill it.
+      if (opportunityIds.length > 0) {
+        await tx.opportunity.updateMany({
+          where: { ...scope(ctx), id: { in: opportunityIds } },
+          data: { sourceOpportunityId: null },
+        });
+        await tx.externalIdentityMapping.deleteMany({
+          where: {
+            ...scope(ctx),
+            operantoEntityType: "opportunity",
+            operantoEntityId: { in: opportunityIds },
+          },
+        });
+      }
+
+      // 7. The raw inbound events — a verbatim copy of everything received.
+      //    Queried by correlationId and by the leadId inside the payload, so
+      //    the database does the filtering: loading every event in the tenant
+      //    to filter in memory does not survive real volume.
+      //
+      //    Rows the RETENTION sweep already touched are deliberately included:
+      //    that sweep keeps correlationId on purpose, so skipping them here
+      //    would leave the re-identification key on exactly the older events.
       let events = 0;
       if (sourceLeadIds.length > 0) {
-        const candidates = await tx.inboundEvent.findMany({
-          where: { ...scope(ctx), payloadRedactedAt: null },
+        const affected = await tx.inboundEvent.findMany({
+          where: {
+            ...scope(ctx),
+            OR: [
+              { correlationId: { in: sourceLeadIds } },
+              ...sourceLeadIds.map((leadId) => ({
+                rawPayload: {
+                  path: ["data", "leadId"],
+                  equals: leadId,
+                } as Prisma.JsonFilter,
+              })),
+            ],
+          },
           select: { id: true, rawPayload: true },
-        });
-        const affected = candidates.filter((event) => {
-          const data = (event.rawPayload as { data?: { leadId?: string } } | null)?.data;
-          return data?.leadId ? sourceLeadIds.includes(data.leadId) : false;
         });
         for (const event of affected) {
           await tx.inboundEvent.update({
@@ -182,6 +214,29 @@ export async function eraseCustomer(
         }
         events = affected.length;
       }
+
+      // 7. Audit metadata. The trail of WHAT happened must survive, but staff
+      //    actions recorded free text (task titles) and the source lead id,
+      //    so those values are cleared while the rows remain.
+      await tx.auditEvent.updateMany({
+        where: {
+          ...scope(ctx),
+          OR: [
+            { targetType: "Customer", targetId: customer.id },
+            ...(opportunityIds.length > 0
+              ? [{ targetType: "Opportunity", targetId: { in: opportunityIds } }]
+              : []),
+            ...(sourceLeadIds.length > 0
+              ? [{ correlationId: { in: sourceLeadIds } }]
+              : []),
+          ],
+        },
+        data: {
+          beforeMetadata: Prisma.DbNull,
+          afterMetadata: Prisma.DbNull,
+          correlationId: null,
+        },
+      });
 
       return {
         customerId: customer.id,
@@ -247,10 +302,16 @@ export async function setProcessingRestriction(
  * Retention sweep: redact raw payloads older than the retention window.
  *
  * Raw payloads exist so a failed event can be replayed and debugged. Once an
- * event is processed and old, keeping a verbatim copy of a customer's name,
- * phone and message is pure liability — so this runs on the same schedule as
- * the retry sweep. Only PROCESSED events are touched: anything still failing
- * or dead-lettered may still need its payload to be recovered.
+ * event is old, keeping a verbatim copy of a customer's name, phone and
+ * message is pure liability — so this runs on the same schedule as the retry
+ * sweep.
+ *
+ * It applies to EVERY status, not only PROCESSED. A dead-lettered event never
+ * succeeds and never produces a customer, so it is reachable by neither retry
+ * nor erasure: excluding it here is what made its payload permanent. The
+ * retention window is the debugging budget for a failing event — past it, the
+ * payload goes and `lastError` plus the envelope remain. `processInboundEvent`
+ * refuses to claim a redacted event, so nothing can be replayed from a husk.
  */
 export async function redactExpiredPayloads(limit = 500): Promise<{
   scanned: number;
@@ -260,12 +321,13 @@ export async function redactExpiredPayloads(limit = 500): Promise<{
   const retentionDays = payloadRetentionDays();
   const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
 
+  // Every status, not just PROCESSED. A DEAD_LETTER event can never be
+  // retried (the sweep excludes it once attempts are exhausted) and never
+  // produced a customer to erase from, so filtering on PROCESSED left its
+  // verbatim payload — name, email, phone, message — stored forever with no
+  // path to remove it. The envelope and `lastError` remain for diagnosis.
   const expired = await prisma.inboundEvent.findMany({
-    where: {
-      payloadRedactedAt: null,
-      processingStatus: "PROCESSED",
-      receivedAt: { lt: cutoff },
-    },
+    where: { payloadRedactedAt: null, receivedAt: { lt: cutoff } },
     select: { id: true, rawPayload: true, organisationId: true },
     take: limit,
   });
