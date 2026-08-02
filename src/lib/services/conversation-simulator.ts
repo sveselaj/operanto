@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { auditSystem } from "@/lib/audit";
 import { normalizeEmail } from "@/lib/normalize";
+import { resolveCustomerByChannelIdentity } from "@/lib/services/customer-identity";
 
 /**
  * Deterministic conversation simulator — development, tests, and staging ONLY.
@@ -127,14 +128,24 @@ export async function ingestSimulatedMessage(
       create: { organisationId, type: "SIMULATOR", displayName: "Simulator" },
     });
 
-    // Exact-match linking only; erased tombstones are never re-matched.
-    const customer = await tx.customer.findFirst({
-      where: {
+    // Identity ladder for channel ingestion, exact matches only, erased
+    // tombstones never re-matched: 1) a taught channel identity for this
+    // sender (see linkConversationCustomer — linking "teaches" the handle),
+    // 2) the scenario's e-mail. Never fuzzy, never creates customers.
+    const customer =
+      (await resolveCustomerByChannelIdentity(
+        tx,
         organisationId,
-        erasedAt: null,
-        emailNormalized: normalizeEmail(scenario.linkEmail),
-      },
-    });
+        "SIMULATOR",
+        scenario.senderExternalRef,
+      )) ??
+      (await tx.customer.findFirst({
+        where: {
+          organisationId,
+          erasedAt: null,
+          emailNormalized: normalizeEmail(scenario.linkEmail),
+        },
+      }));
 
     const now = new Date();
     const existing = await tx.conversation.findUnique({

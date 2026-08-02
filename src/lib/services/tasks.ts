@@ -6,7 +6,7 @@ import { scope, type OrgContext } from "@/lib/org-context";
 import { audit } from "@/lib/audit";
 import { opportunityAccessWhere } from "@/lib/services/opportunities";
 
-function taskAccessWhere(ctx: OrgContext): Prisma.TaskWhereInput {
+export function taskAccessWhere(ctx: OrgContext): Prisma.TaskWhereInput {
   if (can(ctx.membership.role, "opportunities:view_all")) return scope(ctx);
   return {
     ...scope(ctx),

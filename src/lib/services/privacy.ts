@@ -41,6 +41,7 @@ export type ErasureResult = {
   events: number;
   conversations: number;
   messages: number;
+  channelIdentities: number;
 };
 
 /**
@@ -157,6 +158,12 @@ export async function eraseCustomer(
         where: { ...scope(ctx), customerId: customer.id },
         data: { displayName: null, externalRef: null },
       });
+      // Channel identities are pure identifiers, so they are DELETED, not
+      // redacted — keeping any of them would let the next inbound message
+      // re-match the tombstone.
+      const identities = await tx.customerIdentity.deleteMany({
+        where: { ...scope(ctx), customerId: customer.id },
+      });
 
       // 6. The source lead id is a foreign key straight back to the person in
       //    Pronatona. Clearing the payload copy while leaving it on the
@@ -245,6 +252,7 @@ export async function eraseCustomer(
         events,
         conversations: conversationIds.length,
         messages,
+        channelIdentities: identities.count,
       };
     },
     { timeout: 30_000, maxWait: 10_000 },
@@ -263,6 +271,7 @@ export async function eraseCustomer(
       eventPayloadsRedacted: result.events,
       conversationsRedacted: result.conversations,
       messagesRedacted: result.messages,
+      channelIdentitiesDeleted: result.channelIdentities,
     },
   });
 
