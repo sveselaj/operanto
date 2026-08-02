@@ -78,6 +78,7 @@ export default async function IntegrationsPage() {
             {channelConnections.map((connection) => (
               <div
                 key={connection.id}
+                data-testid={`connection-${connection.type}-${connection.phoneNumberId ?? connection.id}`}
                 className="flex items-center justify-between px-4 py-3 text-sm"
               >
                 <div>
