@@ -44,10 +44,15 @@ export async function storeChannelPayload(
   const dedupeKey = adapter.dedupeKey(payload);
   if (!dedupeKey) return { stored: false, rejected: "no_dedupe_key" };
 
-  // Tenant resolution is exact: the simulator references the connection id;
-  // live adapters will resolve by their provider account id. No fallback.
+  // Tenant resolution is exact and per-type: the simulator references the
+  // connection id; WhatsApp resolves by the AUTHORITATIVE phone_number_id
+  // (globally unique by constraint) and additionally requires the inbound
+  // stage gate. No first-match scans, no fallback tenant, ever.
   const connection = await prisma.channelConnection.findFirst({
-    where: { id: ref, type: channelType, status: "ACTIVE" },
+    where:
+      channelType === "WHATSAPP"
+        ? { type: channelType, phoneNumberId: ref, status: "ACTIVE", inboundEnabled: true }
+        : { id: ref, type: channelType, status: "ACTIVE" },
   });
   if (!connection) return { stored: false, rejected: "unresolvable_tenant" };
 
@@ -271,6 +276,9 @@ async function projectInboundMessage(
           body: item.body,
           providerMessageId: item.providerMessageId,
           providerTimestamp: item.providerTimestamp,
+          // Safe media metadata only; the media_pending state renders in the
+          // conversation until binary retrieval ships.
+          metadata: item.media ? { media: item.media } : undefined,
         },
       });
       messageId = message.id;

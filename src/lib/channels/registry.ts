@@ -1,6 +1,7 @@
 import type { ChannelType } from "@prisma/client";
 import type { ConversationChannelAdapter } from "@/lib/channels/types";
 import { SimulatorChannelAdapter } from "@/lib/channels/simulator-adapter";
+import { WhatsAppCloudAdapter } from "@/lib/channels/whatsapp-adapter";
 
 /**
  * Adapter registry — deny by default. MANUAL deliberately has no adapter:
@@ -11,6 +12,7 @@ import { SimulatorChannelAdapter } from "@/lib/channels/simulator-adapter";
 
 const ADAPTERS: Partial<Record<ChannelType, ConversationChannelAdapter>> = {
   SIMULATOR: new SimulatorChannelAdapter(),
+  WHATSAPP: new WhatsAppCloudAdapter(),
 };
 
 export function getChannelAdapter(

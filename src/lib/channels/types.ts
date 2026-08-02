@@ -12,9 +12,10 @@ import type { ChannelConnection, ChannelType, MessageDeliveryStatus } from "@pri
  *   secrets are possible even where v1 uses app-level secrets;
  * - normalized events are data; nothing in them is executed.
  *
- * Slice 5A ships exactly one adapter (the deterministic simulator) and no
- * outbound transmission: `sendMessage` exists on the interface as the Slice
- * 5B contract and must throw until a live connector implements it.
+ * Slice 5A shipped exactly one adapter (the deterministic simulator), which
+ * must always throw from `sendMessage`. Slice 5B adds the WhatsApp Cloud
+ * adapter — its `sendMessage` is reachable ONLY through the explicit
+ * sendWhatsAppMessage service operation and its server-side recheck chain.
  */
 
 export type NormalizedInboundMessage = {
@@ -29,6 +30,18 @@ export type NormalizedInboundMessage = {
   };
   subject: string | null;
   body: string;
+  /**
+   * Safe media metadata only (first-release policy): provider media id, mime
+   * type and filename — never a provider URL or token. `pending: true` marks
+   * the visible media_pending state until binary retrieval ships.
+   */
+  media?: {
+    pending: true;
+    kind: string;
+    providerMediaId: string;
+    mimeType: string | null;
+    filename: string | null;
+  } | null;
 };
 
 export type NormalizedDeliveryStatus = {
@@ -45,6 +58,8 @@ export type SendMessageInput = {
   providerThreadId: string | null;
   recipientExternalId: string;
   body: string;
+  /** Organisation-authorized template (required outside the service window). */
+  template?: { name: string; language: string } | null;
 };
 
 export type SendMessageResult = {
@@ -60,11 +75,15 @@ export interface ConversationChannelAdapter {
   readonly type: ChannelType;
   /** Provider GET handshake (e.g. hub.challenge); null when unsupported. */
   verifyChallenge(url: URL): string | null;
-  /** Verify a raw payload against the RESOLVED connection's secret. */
+  /**
+   * Verify a raw payload BEFORE any tenant data processing. Adapters whose
+   * secret is deployment-level (the Operanto-managed Meta app) receive null
+   * here; adapters with per-tenant secrets receive the resolved connection.
+   */
   verifySignature(
     headers: Headers,
     rawBody: string,
-    connection: ChannelConnection,
+    connection: ChannelConnection | null,
   ): boolean;
   classifyEvent(payload: unknown): "message" | "status" | "ignore";
   /** Provider account reference used to resolve the tenant; null = reject. */

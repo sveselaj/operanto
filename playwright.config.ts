@@ -45,6 +45,18 @@ export default defineConfig({
         url: "http://localhost:3000/api/health",
         reuseExistingServer: false,
         timeout: 120_000,
-        env: { AUTH_URL: "http://localhost:3000" },
+        env: {
+          AUTH_URL: "http://localhost:3000",
+          // WhatsApp e2e: signed webhooks against the real route, with the
+          // Graph API replaced by the spec's local mock server. The base-URL
+          // override is honoured only outside production (OPERANTO_ENV=test
+          // here), and none of these values exist in deployed environments.
+          META_APP_SECRET: process.env.META_APP_SECRET ?? "e2e-meta-app-secret",
+          META_WEBHOOK_VERIFY_TOKEN:
+            process.env.META_WEBHOOK_VERIFY_TOKEN ?? "e2e-verify-token",
+          META_GRAPH_BASE_URL: "http://127.0.0.1:4545",
+          OPERANTO_WHATSAPP_INBOUND_ENABLED: "1",
+          OPERANTO_WHATSAPP_OUTBOUND_ENABLED: "1",
+        },
       },
 });

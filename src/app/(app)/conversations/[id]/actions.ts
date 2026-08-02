@@ -24,6 +24,11 @@ import {
 } from "@/lib/services/approvals";
 import { runTool } from "@/lib/ai/tools";
 import { AIError } from "@/lib/ai/types";
+import {
+  retryWhatsAppSend,
+  SendRefusedError,
+  sendWhatsAppMessage,
+} from "@/lib/services/whatsapp-send";
 
 export type ComposerResult = { error: string } | { ok: true } | null;
 
@@ -278,4 +283,49 @@ export async function addNoteAction(
   }
   revalidatePath(`/conversations/${id}`);
   return { ok: true };
+}
+
+export type SendWhatsAppResult =
+  | { error: string }
+  | { ok: true; deliveryStatus: string }
+  | null;
+
+/**
+ * Explicit human send — the only UI path to external WhatsApp transmission.
+ * All policy decisions are re-made server-side in sendWhatsAppMessage; this
+ * action only shapes the form data.
+ */
+export async function sendWhatsAppAction(
+  _prev: SendWhatsAppResult,
+  formData: FormData,
+): Promise<SendWhatsAppResult> {
+  const ctx = await requireOrg();
+  const conversationId = String(formData.get("conversationId") ?? "");
+  const idempotencyKey = String(formData.get("idempotencyKey") ?? "");
+  const templateId = String(formData.get("templateId") ?? "");
+  const body = String(formData.get("body") ?? "");
+  if (!conversationId || !idempotencyKey) return { error: "Missing send parameters" };
+  try {
+    const result = await sendWhatsAppMessage(ctx, {
+      conversationId,
+      body: body || null,
+      templateId: templateId || null,
+      idempotencyKey,
+    });
+    revalidatePath(`/conversations/${conversationId}`);
+    return { ok: true, deliveryStatus: result.deliveryStatus };
+  } catch (error) {
+    revalidatePath(`/conversations/${conversationId}`);
+    if (error instanceof SendRefusedError) return { error: error.message };
+    return { error: errorMessage(error) };
+  }
+}
+
+/** Explicit, idempotent human retry of a FAILED send. */
+export async function retryWhatsAppSendAction(formData: FormData) {
+  const ctx = await requireOrg();
+  const conversationId = String(formData.get("conversationId") ?? "");
+  const messageId = String(formData.get("messageId") ?? "");
+  if (!conversationId || !messageId) return;
+  await runControl(conversationId, () => retryWhatsAppSend(ctx, messageId));
 }

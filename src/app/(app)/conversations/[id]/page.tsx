@@ -26,6 +26,10 @@ import {
 import { MessageComposer, NoteForm } from "./composer-forms";
 import { CustomerContextPanel } from "./customer-context-panel";
 import { AiPanel, type AiResultView, type ApprovalView } from "./ai-panel";
+import { WhatsAppSendPanel } from "./whatsapp-send-panel";
+import { retryWhatsAppSendAction } from "./actions";
+import { listApprovedTemplates } from "@/lib/services/templates";
+import { serviceWindowState } from "@/lib/channels/service-window";
 import { listAiActions } from "@/lib/services/ai";
 import { getConversationApproval } from "@/lib/services/approvals";
 import { getAiConfiguration } from "@/lib/services/ai-config";
@@ -35,6 +39,7 @@ export const metadata: Metadata = { title: "Conversation" };
 const CHANNEL_LABELS: Record<string, string> = {
   MANUAL: "Manual",
   SIMULATOR: "Simulator",
+  WHATSAPP: "WhatsApp",
 };
 
 export default async function ConversationDetailPage({
@@ -58,6 +63,21 @@ export default async function ConversationDetailPage({
   const canAiRead = can(ctx.membership.role, "ai:read");
   const canTakeover = can(ctx.membership.role, "conversations:takeover");
   const canConfigureAi = can(ctx.membership.role, "ai:configure");
+  const canSend = can(ctx.membership.role, "messages:send");
+
+  // The send panel appears only when every static gate is open; the dynamic
+  // gates (consent, window, template, credential) are re-decided server-side
+  // at the moment of the send.
+  const whatsappSendable =
+    canSend &&
+    conversation.channelType === "WHATSAPP" &&
+    conversation.connection?.type === "WHATSAPP" &&
+    conversation.connection.status === "ACTIVE" &&
+    conversation.connection.outboundEnabled &&
+    process.env.OPERANTO_WHATSAPP_OUTBOUND_ENABLED === "1" &&
+    conversation.status !== "ARCHIVED";
+  const sendWindow = serviceWindowState(conversation.lastInboundAt, new Date());
+  const approvedTemplates = whatsappSendable ? await listApprovedTemplates(ctx) : [];
 
   const [members, linkableCustomers, aiConfig, aiActions, approval] =
     await Promise.all([
@@ -236,6 +256,40 @@ export default async function ConversationDetailPage({
                     <p className={message.redactedAt ? "italic text-muted-foreground" : undefined}>
                       {message.redactedAt ? "(content redacted)" : message.body}
                     </p>
+                    {!message.redactedAt &&
+                    (message.metadata as { media?: { pending?: boolean; kind?: string } } | null)
+                      ?.media?.pending ? (
+                      <p className="mt-1 inline-block rounded-full border border-warning/50 px-2 py-0.5 text-xs text-warning">
+                        {String(
+                          (message.metadata as { media?: { kind?: string } }).media?.kind ??
+                            "media",
+                        )}{" "}
+                        pending retrieval
+                      </p>
+                    ) : null}
+                    {message.deliveryStatus === "FAILED" ? (
+                      <div className="mt-1 flex items-center gap-2">
+                        <p className="text-xs text-danger">
+                          {message.errorMessage ?? "Send failed"}
+                        </p>
+                        {whatsappSendable ? (
+                          <form action={retryWhatsAppSendAction}>
+                            <input
+                              type="hidden"
+                              name="conversationId"
+                              value={conversation.id}
+                            />
+                            <input type="hidden" name="messageId" value={message.id} />
+                            <button
+                              type="submit"
+                              className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-muted"
+                            >
+                              Retry send
+                            </button>
+                          </form>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 ))
               )}
@@ -250,6 +304,26 @@ export default async function ConversationDetailPage({
               </div>
             ) : null}
           </section>
+
+          {whatsappSendable ? (
+            <WhatsAppSendPanel
+              conversationId={conversation.id}
+              withinWindow={sendWindow.withinWindow}
+              windowExpiresAt={sendWindow.expiresAt?.toISOString() ?? null}
+              templates={approvedTemplates.map((t) => ({
+                id: t.id,
+                name: t.name,
+                language: t.language,
+                body: t.body,
+              }))}
+              disabled={Boolean(customer?.erasedAt || customer?.restrictedAt)}
+              disabledReason={
+                customer?.erasedAt
+                  ? "This customer has been erased — sending is not possible."
+                  : "Processing is restricted for this customer — sending is blocked."
+              }
+            />
+          ) : null}
 
           {canAiRead && aiConfig ? (
             <AiPanel
