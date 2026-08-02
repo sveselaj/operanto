@@ -8,8 +8,11 @@ import { prisma } from "@/lib/prisma";
 import { scope } from "@/lib/org-context";
 import { PageHeader } from "@/components/app/page-header";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/format";
+import { WhatsAppConnectForm } from "./whatsapp-connect-form";
+import { setStageGateAction, verifyConnectionAction } from "./whatsapp-actions";
 
 export const metadata: Metadata = { title: "Integrations" };
 
@@ -73,7 +76,52 @@ export default async function IntegrationsPage() {
                     {connection.lastErrorAt
                       ? ` · last error ${formatDateTime(connection.lastErrorAt)}`
                       : ""}
+                    {connection.type === "WHATSAPP"
+                      ? ` · verified ${formatDateTime(connection.lastVerifiedAt)}`
+                      : ""}
                   </p>
+                  {connection.type === "WHATSAPP" ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Badge variant={connection.inboundEnabled ? "default" : "outline"}>
+                        inbound {connection.inboundEnabled ? "on" : "off"}
+                      </Badge>
+                      <Badge variant={connection.outboundEnabled ? "default" : "outline"}>
+                        outbound {connection.outboundEnabled ? "on" : "off"}
+                      </Badge>
+                      <form action={setStageGateAction}>
+                        <input type="hidden" name="connectionId" value={connection.id} />
+                        <input type="hidden" name="gate" value="inbound" />
+                        <input
+                          type="hidden"
+                          name="enabled"
+                          value={connection.inboundEnabled ? "false" : "true"}
+                        />
+                        <Button type="submit" variant="outline" size="sm">
+                          {connection.inboundEnabled ? "Disable inbound" : "Enable inbound"}
+                        </Button>
+                      </form>
+                      <form action={setStageGateAction}>
+                        <input type="hidden" name="connectionId" value={connection.id} />
+                        <input type="hidden" name="gate" value="outbound" />
+                        <input
+                          type="hidden"
+                          name="enabled"
+                          value={connection.outboundEnabled ? "false" : "true"}
+                        />
+                        <Button type="submit" variant="outline" size="sm">
+                          {connection.outboundEnabled
+                            ? "Disable outbound"
+                            : "Enable outbound"}
+                        </Button>
+                      </form>
+                      <form action={verifyConnectionAction}>
+                        <input type="hidden" name="connectionId" value={connection.id} />
+                        <Button type="submit" variant="outline" size="sm">
+                          Verify connection
+                        </Button>
+                      </form>
+                    </div>
+                  ) : null}
                 </div>
                 <Badge variant={connection.status === "ACTIVE" ? "default" : "danger"}>
                   {connection.status}
@@ -81,6 +129,23 @@ export default async function IntegrationsPage() {
               </div>
             ))}
           </div>
+        </div>
+      ) : null}
+
+      {can(ctx.membership.role, "channels:connect") ? (
+        <div className="mt-6 max-w-xl">
+          <h2 className="mb-2 text-sm font-semibold">Connect WhatsApp Cloud</h2>
+          <Card>
+            <CardContent className="pt-5">
+              <p className="mb-3 text-xs text-muted-foreground">
+                Connect this organisation&apos;s WhatsApp Business Account under the
+                Operanto-managed Meta application. The access token is stored
+                encrypted; inbound and outbound stay disabled until enabled
+                per stage above.
+              </p>
+              <WhatsAppConnectForm />
+            </CardContent>
+          </Card>
         </div>
       ) : null}
     </>

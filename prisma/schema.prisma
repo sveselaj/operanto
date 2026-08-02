@@ -82,6 +82,7 @@ model Organisation {
   aiConfiguration          AiConfiguration?
   channelInboundEvents     ChannelInboundEvent[]
   consents                 Consent[]
+  messageTemplates         MessageTemplate[]
 }
 
 model User {
@@ -475,6 +476,7 @@ model Task {
 enum ChannelType {
   MANUAL
   SIMULATOR
+  WHATSAPP
 }
 
 enum ChannelConnectionStatus {
@@ -523,6 +525,7 @@ enum MessageSenderType {
 enum MessageDeliveryStatus {
   RECORDED
   QUEUED
+  SENDING
   SENT
   DELIVERED
   READ
@@ -540,11 +543,27 @@ model ChannelConnection {
   lastSuccessfulAt DateTime?
   lastErrorAt      DateTime?
   lastError        String?
+
+  /// WhatsApp Cloud (Slice 5B): each organisation connects its OWN WhatsApp
+  /// Business Account and phone number under the one Operanto-managed Meta
+  /// application. phoneNumberId is the AUTHORITATIVE tenant-routing key for
+  /// inbound webhooks — globally unique in Meta's namespace, enforced unique
+  /// here so routing can never be ambiguous. The access token is AES-256-GCM
+  /// ciphertext under OPERANTO_ENCRYPTION_KEY; no plaintext credential is
+  /// ever stored.
+  wabaId               String?
+  phoneNumberId        String?
+  displayPhoneNumber   String?
+  accessTokenEncrypted String?
+  tokenExpiresAt       DateTime?
+  lastVerifiedAt       DateTime?
+  /// Per-connection stage gates; both default OFF. Deployment-level flags
+  /// (OPERANTO_WHATSAPP_INBOUND_ENABLED / _OUTBOUND_ENABLED) gate on top.
+  inboundEnabled       Boolean   @default(false)
+  outboundEnabled      Boolean   @default(false)
+
   createdAt      DateTime                @default(now())
   updatedAt      DateTime                @updatedAt
-
-  // No credential columns: MANUAL and SIMULATOR channels have nothing to
-  // authenticate. Live channels add encrypted credentials in their own slice.
 
   organisation  Organisation   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   conversations Conversation[]
@@ -552,6 +571,7 @@ model ChannelConnection {
   inboundEvents ChannelInboundEvent[]
 
   @@unique([organisationId, type, displayName])
+  @@unique([type, phoneNumberId])
   @@index([organisationId])
 }
 
@@ -730,6 +750,9 @@ model Message {
   /// Provider failure detail when deliveryStatus is FAILED.
   errorMessage        String?
   metadata            Json?
+  /// Explicit-send idempotency: unique per organisation, set only by the
+  /// outbound send operation before any provider call.
+  clientDedupeKey     String?
   /// Set when the body was replaced by the retention sweep or an erasure.
   redactedAt          DateTime?
   createdAt           DateTime              @default(now())
@@ -741,6 +764,7 @@ model Message {
   sender       Membership?        @relation("MessageSender", fields: [senderMembershipId], references: [id], onDelete: SetNull)
 
   @@unique([organisationId, channelConnectionId, providerMessageId])
+  @@unique([organisationId, clientDedupeKey])
   @@index([conversationId, createdAt])
   @@index([organisationId, redactedAt, createdAt])
 }
@@ -771,6 +795,34 @@ model CustomerIdentity {
 
   @@unique([organisationId, channelType, externalId])
   @@index([organisationId, customerId])
+}
+
+enum TemplateStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Organisation-authorized WhatsApp message templates. Outside the 24-hour
+/// customer-service window a send MUST reference an APPROVED row from this
+/// table — never an arbitrary client-provided template name. Rows mirror
+/// templates approved in Meta Business Manager (no automatic sync in this
+/// slice; administration is manual and audited).
+model MessageTemplate {
+  id             String         @id @default(cuid())
+  organisationId String
+  name           String
+  language       String
+  /// Human-readable body for preview only; contains no customer data.
+  body           String
+  status         TemplateStatus @default(PENDING)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, name, language])
+  @@index([organisationId, status])
 }
 
 /// Internal staff commentary. Deliberately a separate model from Message so

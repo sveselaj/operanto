@@ -47,6 +47,14 @@ export type Permission =
   | "approvals:decide"
   /** Channel connection administration and health. */
   | "channels:manage"
+  /** Connect a provider account and store its (encrypted) credential. */
+  | "channels:connect"
+  /** Explicit outbound send on an external channel. The permission is
+   *  necessary, never sufficient: every send re-runs the full server-side
+   *  recheck chain (consent, restriction, window, template, connection). */
+  | "messages:send"
+  /** Administer organisation-authorized message templates. */
+  | "templates:manage"
   /** Manual consent corrections (compliance-sensitive). */
   | "consent:manage";
 
@@ -82,6 +90,9 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "approvals:read",
     "approvals:decide",
     "channels:manage",
+    "channels:connect",
+    "messages:send",
+    "templates:manage",
     "consent:manage",
   ],
   SUPERVISOR: [
@@ -108,6 +119,8 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "ai:read",
     "approvals:read",
     "approvals:decide",
+    "messages:send",
+    "templates:manage",
     "consent:manage",
   ],
   OPERATOR: [
@@ -124,6 +137,7 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "conversations:takeover",
     "ai:run",
     "ai:read",
+    "messages:send",
   ],
 };
 
