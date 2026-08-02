@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { payloadRetentionDays, redactPayload } from "@/lib/privacy-redaction";
+import {
+  messageRetentionDays,
+  payloadRetentionDays,
+  redactPayload,
+} from "@/lib/privacy-redaction";
 
 /**
  * These tests are about what must be GONE. The database-touching paths are
@@ -109,6 +113,31 @@ describe("payloadRetentionDays", () => {
       vi.stubEnv("OPERANTO_PAYLOAD_RETENTION_DAYS", bad);
       expect(payloadRetentionDays()).toBe(30);
     }
+    vi.unstubAllEnvs();
+  });
+});
+
+describe("messageRetentionDays", () => {
+  it("defaults to the provisional 12 months", () => {
+    vi.stubEnv("OPERANTO_MESSAGE_RETENTION_DAYS", "");
+    expect(messageRetentionDays()).toBe(365);
+    vi.unstubAllEnvs();
+  });
+
+  it("prefers the per-organisation override", () => {
+    vi.stubEnv("OPERANTO_MESSAGE_RETENTION_DAYS", "500");
+    expect(messageRetentionDays(90)).toBe(90);
+    vi.unstubAllEnvs();
+  });
+
+  it("falls through nonsensical overrides to the environment, then the default", () => {
+    vi.stubEnv("OPERANTO_MESSAGE_RETENTION_DAYS", "180");
+    expect(messageRetentionDays(0)).toBe(180);
+    expect(messageRetentionDays(-3)).toBe(180);
+    expect(messageRetentionDays(null)).toBe(180);
+    vi.unstubAllEnvs();
+    vi.stubEnv("OPERANTO_MESSAGE_RETENTION_DAYS", "not-a-number");
+    expect(messageRetentionDays(null)).toBe(365);
     vi.unstubAllEnvs();
   });
 });

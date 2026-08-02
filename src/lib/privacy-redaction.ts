@@ -46,3 +46,22 @@ export function payloadRetentionDays(): number {
   const raw = Number(process.env.OPERANTO_PAYLOAD_RETENTION_DAYS ?? 30);
   return Number.isFinite(raw) && raw > 0 ? raw : 30;
 }
+
+/**
+ * Days a conversation message body is kept before the retention sweep redacts
+ * it. Per-organisation override first, then the environment, then 365 days —
+ * the PROVISIONAL 12-month default from the consolidation decisions. The
+ * production value still requires contractual and legal confirmation; this
+ * function is where that confirmed value will land.
+ */
+export function messageRetentionDays(organisationOverride?: number | null): number {
+  if (
+    typeof organisationOverride === "number" &&
+    Number.isFinite(organisationOverride) &&
+    organisationOverride > 0
+  ) {
+    return organisationOverride;
+  }
+  const raw = Number(process.env.OPERANTO_MESSAGE_RETENTION_DAYS ?? 365);
+  return Number.isFinite(raw) && raw > 0 ? raw : 365;
+}

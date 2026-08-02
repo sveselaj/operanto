@@ -8,10 +8,7 @@
  * cross-tenant isolation testing (development only).
  */
 import "dotenv/config";
-import {
-  createCipheriv,
-  randomBytes,
-} from "node:crypto";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
@@ -199,6 +196,38 @@ async function main() {
       update: { role: "OPERATOR", status: "ACTIVE" },
     });
     console.log("Fixture operator seeded (operator@operanto.local).");
+
+    // ADMIN and SUPERVISOR must have a second factor, so the fixture admins
+    // are enrolled with a KNOWN secret and deterministic recovery codes. The
+    // acceptance suite then exercises the real 2FA sign-in rather than
+    // bypassing it.
+    //
+    // This includes SEED_ADMIN_EMAIL, whose password is already a fixture
+    // value in any environment where SEED_TEST_USERS=1. The shared secret is
+    // why the whole fixture block is refused when NODE_ENV=production (above):
+    // an account enrolled this way has a second factor anybody with the env
+    // file can compute, which is no second factor at all.
+    const totpSecret = requiredFixturePassword("SEED_TEST_TOTP_SECRET");
+    const recoveryHashes = Array.from({ length: 60 }, (_, i) =>
+      createHash("sha256")
+        .update(`TEST${String(i).padStart(5, "0")}`)
+        .digest("hex"),
+    );
+    const adminEmails = [adminEmail.toLowerCase(), "admin@isolation-test.local"];
+    for (const email of adminEmails) {
+      const target = await prisma.user.findUnique({ where: { email } });
+      if (!target) continue;
+      await prisma.user.update({
+        where: { id: target.id },
+        data: {
+          totpSecretEncrypted: encryptSecret(totpSecret),
+          totpConfirmedAt: new Date(),
+          totpLastCounter: null,
+          recoveryCodeHashes: recoveryHashes,
+        },
+      });
+    }
+    console.log(`Fixture 2FA enrolled for ${adminEmails.length} admin account(s).`);
   }
 
   console.log(`Seed complete. Organisation: ${organisation.slug} (${organisation.id})`);

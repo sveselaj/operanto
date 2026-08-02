@@ -29,6 +29,33 @@ describe("role matrix", () => {
   });
 });
 
+describe("conversation permissions", () => {
+  it("ADMIN and SUPERVISOR hold the full conversation set", () => {
+    for (const role of ["ADMIN", "SUPERVISOR"] as const) {
+      expect(can(role, "conversations:view_all")).toBe(true);
+      expect(can(role, "conversations:create")).toBe(true);
+      expect(can(role, "conversations:update")).toBe(true);
+      expect(can(role, "conversations:archive")).toBe(true);
+      expect(can(role, "conversations:assign")).toBe(true);
+      expect(can(role, "conversations:link_customer")).toBe(true);
+      expect(can(role, "conversations:note")).toBe(true);
+      expect(can(role, "conversations:message")).toBe(true);
+    }
+  });
+
+  it("OPERATOR works assigned conversations but cannot assign, archive, or relink", () => {
+    expect(can("OPERATOR", "conversations:view_assigned")).toBe(true);
+    expect(can("OPERATOR", "conversations:create")).toBe(true);
+    expect(can("OPERATOR", "conversations:update")).toBe(true);
+    expect(can("OPERATOR", "conversations:note")).toBe(true);
+    expect(can("OPERATOR", "conversations:message")).toBe(true);
+    expect(can("OPERATOR", "conversations:view_all")).toBe(false);
+    expect(can("OPERATOR", "conversations:assign")).toBe(false);
+    expect(can("OPERATOR", "conversations:archive")).toBe(false);
+    expect(can("OPERATOR", "conversations:link_customer")).toBe(false);
+  });
+});
+
 describe("requirePermission", () => {
   it("throws ForbiddenError with the permission name", () => {
     expect(() => requirePermission("OPERATOR", "members:manage")).toThrow(

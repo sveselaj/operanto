@@ -22,7 +22,7 @@ One Next.js app serves three domains (separated by `src/proxy.ts`):
 | Domain | Surface |
 |---|---|
 | `operanto.ai` | Public marketing site (`src/app/(marketing)`) |
-| `app.operanto.ai` | Cockpit (`src/app/(app)`) — `/dashboard`, `/customers`, `/opportunities`, `/tasks`, `/activity`, `/integrations/pronatona`, `/settings/*`, `/audit` |
+| `app.operanto.ai` | Cockpit (`src/app/(app)`) — `/dashboard`, `/conversations`, `/customers`, `/opportunities`, `/tasks`, `/activity`, `/integrations/pronatona`, `/settings/*`, `/audit` |
 | `api.operanto.ai` | API (`src/app/api`) — `POST /api/v1/integrations/pronatona/events`, `POST /api/internal/events/retry`, `GET /api/health` |
 
 ## Stack
@@ -61,6 +61,7 @@ Checks: `pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm build`.
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — components, event pipeline, tenancy model
+- [docs/operanto-conversations-foundation.md](docs/operanto-conversations-foundation.md) — conversations model, permissions, simulator, privacy behaviour
 - [docs/operanto-product-architecture.md](docs/operanto-product-architecture.md) — one external brand, public capability model, naming rules
 - [docs/operanto-capability-gap-analysis.md](docs/operanto-capability-gap-analysis.md) — capability matrix across main, prototypes, and specs
 - [docs/operanto-target-architecture.md](docs/operanto-target-architecture.md) — bounded capabilities and consolidation rules

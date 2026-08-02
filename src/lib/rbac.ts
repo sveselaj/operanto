@@ -22,7 +22,19 @@ export type Permission =
   | "activity:view_all"
   | "audit:view"
   /** Erasure and restriction of processing — organisation-wide effect. */
-  | "privacy:manage";
+  | "privacy:manage"
+  | "conversations:view_all"
+  | "conversations:view_assigned"
+  | "conversations:create"
+  /** Status and priority changes. Archiving is gated separately. */
+  | "conversations:update"
+  | "conversations:archive"
+  | "conversations:assign"
+  /** Linking/unlinking a Customer changes what personal data a conversation
+   *  exposes, so it is held to the supervisor tier. */
+  | "conversations:link_customer"
+  | "conversations:note"
+  | "conversations:message";
 
 const MATRIX: Record<MembershipRole, Permission[]> = {
   ADMIN: [
@@ -40,6 +52,15 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "activity:view_all",
     "audit:view",
     "privacy:manage",
+    "conversations:view_all",
+    "conversations:view_assigned",
+    "conversations:create",
+    "conversations:update",
+    "conversations:archive",
+    "conversations:assign",
+    "conversations:link_customer",
+    "conversations:note",
+    "conversations:message",
   ],
   SUPERVISOR: [
     "customers:view_all",
@@ -51,6 +72,15 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "tasks:manage",
     "notes:add",
     "activity:view_all",
+    "conversations:view_all",
+    "conversations:view_assigned",
+    "conversations:create",
+    "conversations:update",
+    "conversations:archive",
+    "conversations:assign",
+    "conversations:link_customer",
+    "conversations:note",
+    "conversations:message",
   ],
   OPERATOR: [
     "customers:view_assigned",
@@ -58,6 +88,11 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "opportunities:update_stage",
     "tasks:manage",
     "notes:add",
+    "conversations:view_assigned",
+    "conversations:create",
+    "conversations:update",
+    "conversations:note",
+    "conversations:message",
   ],
 };
 

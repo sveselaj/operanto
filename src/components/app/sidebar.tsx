@@ -3,6 +3,7 @@ import {
   Activity,
   ClipboardList,
   Gauge,
+  MessageSquare,
   Plug,
   Settings,
   ShieldCheck,
@@ -14,6 +15,7 @@ import { can } from "@/lib/rbac";
 
 const CORE_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: Gauge },
+  { href: "/conversations", label: "Conversations", icon: MessageSquare },
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/opportunities", label: "Opportunities", icon: Target },
   { href: "/tasks", label: "Tasks", icon: ClipboardList },

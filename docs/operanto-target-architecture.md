@@ -58,6 +58,16 @@ AI-to-human handover.
 
 ### Entities (target state; mapped onto existing models)
 
+> Slice 1 (2026-08-01) delivered `Conversation`, `Message`,
+> `ConversationNote`, `ConversationParticipant` (with an additional
+> `membershipId` for staff-side rows), and `ChannelConnection`
+> (MANUAL/SIMULATOR, no credential columns yet), plus
+> `Activity.conversationId` and `Organisation.messageRetentionDays`. One
+> deliberate deviation: `MessageDirection` is INBOUND/OUTBOUND only —
+> internal commentary lives exclusively in `ConversationNote`, so a
+> direction flag can never leak a note outbound. Attachments, unread state,
+> and `CustomerIdentity` remain open as planned.
+
 | Conceptual entity | Realisation |
 |---|---|
 | `Customer` | **Existing model, reused.** Never duplicated. |

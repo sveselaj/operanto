@@ -42,11 +42,19 @@ ordering in §7.
 
 ## 1. Conversations (internal engine heritage: mediasync)
 
+> **Slice 1 delivered (2026-08-01, `feature/operanto-conversations-foundation`):**
+> conversation/message/note/participant/channel-connection data model,
+> manual + simulator channels, list/detail UI, assignment, status, priority,
+> customer linking, audit + Activity events, privacy-lifecycle integration
+> with per-organisation message retention. See
+> `docs/operanto-conversations-foundation.md`. Rows below are updated
+> accordingly; everything else in this table remains open.
+
 | Capability | Source | Location | Status | Maturity | Reuse recommendation | Migration risk | Next action |
 |---|---|---|---|---|---|---|---|
-| Conversation / Message / note / tag data model | `legacy`+`msync` | `a1a8735:prisma/schema.prisma`, `msync:prisma/schema.prisma` (Conversation, Message, InternalNote, Tag) | Prototype only | Sound design, wrong tenancy (Workspace/User) | Port and adapt: re-key to Organisation/Membership, assignment → `assignedMembershipId`, add to erasure lifecycle | Medium | Slice 1 (additive migration, no destructive change) |
-| Conversation list + detail UI (3-pane, filters, composer) | `msync` | `[workspace]/inbox/*`, `src/components/inbox/*` (11 components) | Prototype only | Working; URL-driven filters, debounced search, ⌘↵ send | Port and adapt: rewrite ctx/roles, fix telegram/viber filter omission, replace `alert()` error handling | Medium | Slice 1 |
-| Conversation status / priority / assignment / internal notes | `msync` | `lib/services/conversations.ts` (252 ln, permission-gated, audited) | Prototype only | Working | Port and adapt to main's `requirePermission` + `audit()` | Low–medium | Slice 1 |
+| Conversation / Message / note / participant data model | Slice 1 (informed by `legacy`+`msync` shapes) | `prisma/schema.prisma` (Conversation, Message, ConversationNote, ConversationParticipant, ChannelConnection) | Implemented | Organisation/Membership tenancy, tenancy-scoped uniques, erasure + retention integrated. Tags deferred. | Extend, never replace | — | Slice 2 adds `CustomerIdentity` |
+| Conversation list + detail UI | Slice 1 (rewritten on main patterns, not ported) | `src/app/(app)/conversations/*` | Implemented | List/detail with filters, search, pagination; no `alert()` error handling | Extend | — | Unread state + realtime later |
+| Conversation status / priority / assignment / internal notes | Slice 1 | `src/lib/services/conversations.ts` (permission-gated, audited, conditional-claim updates) | Implemented | Working, unit + integration + e2e tested | Extend | — | — |
 | Channel adapter contract | `msync` | `src/lib/channels/types.ts` (pure, no framework deps, constant-time HMAC helpers) | Prototype only | Clean, portable | Cherry-pick nearly unchanged | Low | Slice 5 (interface may land with Slice 1 simulator) |
 | Meta connectors (WhatsApp Cloud, Messenger, Instagram) | `msync` | `src/lib/channels/providers/meta.ts` (tested in `connectors.test.ts`, 218 ln) | Prototype only | Working; attachments dropped as `"[image]"`; global app secret | Port and adapt after adapter framework lands; add per-tenant credential strategy, attachment persistence | High (external API, compliance) | Slice 5+ |
 | Telegram connector | `msync` | `providers/telegram.ts` | Prototype only | Working but `accountRef()` returns null → **cross-tenant routing bug** in fallback | Port only with the tenant-resolution fix | High | Slice 5+ |
@@ -54,7 +62,8 @@ ordering in §7.
 | Web-chat widget + direct connector | `msync`+`legacy` | `app/widget/[channelAccountId]/`, `providers/direct.ts` | Prototype only | Working; public unauthenticated route, security = unguessable id | Requires manual review (abuse surface, rate limits, CSP) before porting | Medium | Slice 5 candidate as the “controlled simulator” |
 | Email channel | `msync` | `providers/unconfigured.ts` (stub throws) | Missing | — | Specify (SMTP/IMAP or provider) before building | — | Backlog |
 | Webhook receipt + dedupe (`WebhookEvent`) | `msync` | `api/webhooks/[channel]/route.ts` (214 ln), `lib/mediasync/webhook-events.ts` | Prototype only | Working single-node; synchronous inline processing, Meta payloads get no event-level dedupe key | Rewrite the processing model on main's store-then-process pipeline (atomic claim, retry, dead-letter); keep the verification/normalization steps | High | Slice 5 |
-| Inbound ingestion (`ingestInbound`: match → conversation reuse → message append) | `msync`+`legacy` | `lib/services/ingestion.ts` (tested) | Prototype only | Working; **matcher conflicts with main's exact-match ladder** (uses socialHandles JSON, ignores erasure tombstones) | Rewrite against `src/lib/events/matching.ts` + new `CustomerIdentity` rung | High | Slice 1 (manual/simulator path), Slice 5 (live) |
+| Inbound ingestion — manual/simulator path | Slice 1 | `src/lib/services/conversation-simulator.ts` (deterministic, constraint-deduped, exact-email linking, tombstone-safe) | Implemented | Working, integration + e2e tested | Live-channel path still to be rewritten for Slice 5 | — | Slice 5 (live adapters on the store-then-process pattern) |
+| Inbound ingestion — live (`ingestInbound`: match → conversation reuse → message append) | `msync`+`legacy` | `lib/services/ingestion.ts` (tested) | Prototype only | Working; **matcher conflicts with main's exact-match ladder** (uses socialHandles JSON, ignores erasure tombstones) | Rewrite against `src/lib/events/matching.ts` + new `CustomerIdentity` rung | High | Slice 5 |
 | Message normalization (per channel → `NormalizedInbound`) | `msync` | connectors + `connectors.test.ts` | Prototype only | Working, tested | Port with connectors | Low | Slice 5 |
 | Consent management (opt-in/out, STOP/START keywords) | `msync` | `Consent` model, `lib/mediasync/{consent,consent-keywords}.ts` (tested) | Prototype only | Working | Port and adapt; fits main's GDPR posture | Low | Slice 5 (before any outbound send) |
 | Message templates | `msync` | `MessageTemplate` model, `templates{,-render}.ts` (tested), settings CRUD | Implemented but incomplete (in prototype: composer never uses templates; `Message.templateId` never written) | Partial | Port render + model later; wire into composer as part of outbound compliance (WhatsApp template rules) | Medium | Backlog |
@@ -179,7 +188,7 @@ and `docs/operanto-target-architecture.md` reflect these decisions.
 | # | Branch | Scope | Depends on |
 |---|---|---|---|
 | 0 | `audit/operanto-capability-gap` | This audit + target architecture. Docs only. | — |
-| 1 | `feature/operanto-conversations-foundation` | Conversation/Message/ConversationNote/ChannelConnection models (additive migration), `conversations:*` permissions, erasure extension, manual entry + simulator channel, list/detail UI, assignment/status/notes, audit + Activity events, unit + e2e tests. | 0 |
+| 1 ✅ | `feature/operanto-conversations-foundation` (delivered 2026-08-01) | Conversation/Message/ConversationNote/ChannelConnection models (additive migration), `conversations:*` permissions, erasure extension, manual entry + simulator channel, list/detail UI, assignment/status/notes, audit + Activity events, unit + integration + e2e tests. | 0 |
 | 2 | `feature/operanto-customer-context` | `CustomerIdentity` (channel handles as a new ladder rung), contextual sidebar (timeline, opportunities, tasks, prior conversations), matching tests. | 1 |
 | 3 | `feature/operanto-conversation-workflows` | Task↔Conversation link (additive), create-task-from-conversation, task progress in timeline. | 1 |
 | 4 | `feature/operanto-ai-handover` | AI provider/service/AIAction port, summarize/classify/draft-reply with approval-gated composer, tool runtime + unified ApprovalRequest, takeover/handling, confidence policy, `ai:run`/`approvals:decide` permissions. Mock mode default. | 1–3 |
