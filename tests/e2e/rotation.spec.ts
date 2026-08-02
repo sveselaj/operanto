@@ -41,7 +41,9 @@ async function rotateTo(page: Page, secret: string) {
 
 /** Number of rotation audit rows currently visible (org-scoped, newest 150). */
 async function rotationAuditCount(page: Page): Promise<number> {
-  await page.goto("/audit");
+  // Filtered by target type: the unfiltered first page displaces older rows
+  // as OTHER event types accumulate, making an unfiltered count flaky.
+  await page.goto("/audit?target=Integration");
   return page.getByText("integration.secret_rotated").count();
 }
 

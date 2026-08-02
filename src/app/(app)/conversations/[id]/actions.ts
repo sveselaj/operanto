@@ -15,6 +15,15 @@ import {
   unlinkConversationCustomer,
 } from "@/lib/services/conversations";
 import { createTask, setTaskStatus } from "@/lib/services/tasks";
+import { setConversationHandling } from "@/lib/services/conversations";
+import { runAiTask } from "@/lib/services/ai";
+import {
+  applyApprovedDraft,
+  decideApproval,
+  editApprovalDraft,
+} from "@/lib/services/approvals";
+import { runTool } from "@/lib/ai/tools";
+import { AIError } from "@/lib/ai/types";
 
 export type ComposerResult = { error: string } | { ok: true } | null;
 
@@ -108,6 +117,134 @@ export async function toggleConversationTaskAction(formData: FormData) {
   if (!conversationId || !taskId) return;
   if (nextStatus !== "OPEN" && nextStatus !== "COMPLETED") return;
   await runControl(conversationId, () => setTaskStatus(ctx, taskId, nextStatus));
+}
+
+export async function setHandlingAction(formData: FormData) {
+  const ctx = await requireOrg();
+  const id = String(formData.get("conversationId") ?? "");
+  const handling = String(formData.get("handling") ?? "");
+  if (!id || (handling !== "AI_ASSISTED" && handling !== "HUMAN_CONTROLLED")) return;
+  await runControl(id, () => setConversationHandling(ctx, id, handling));
+}
+
+function aiErrorMessage(error: unknown): string {
+  if (error instanceof AIError) {
+    switch (error.code) {
+      case "AI_DISABLED":
+        return "AI assistance is not enabled for this organisation.";
+      case "BUDGET_EXHAUSTED":
+        return "The AI usage budget for this period is exhausted. Manual handling is unaffected.";
+      case "PROCESSING_RESTRICTED":
+        return "Processing for this customer is restricted — AI assistance is blocked.";
+      case "TASK_NOT_PERMITTED":
+        return "This AI task is not permitted by your organisation's configuration.";
+      case "TIMEOUT":
+        return "The AI provider timed out. Try again, or continue manually.";
+      case "MALFORMED_OUTPUT":
+        return "The AI provider returned unusable output. Try again, or continue manually.";
+      default:
+        return "AI assistance is temporarily unavailable. Manual handling is unaffected.";
+    }
+  }
+  return errorMessage(error);
+}
+
+export type AiPanelResult = { error: string } | { ok: true } | null;
+
+export async function runAiTaskAction(
+  _prev: AiPanelResult,
+  formData: FormData,
+): Promise<AiPanelResult> {
+  const ctx = await requireOrg();
+  const id = String(formData.get("conversationId") ?? "");
+  const taskType = String(formData.get("taskType") ?? "");
+  if (
+    taskType !== "SUMMARY" &&
+    taskType !== "CLASSIFICATION" &&
+    taskType !== "REPLY_DRAFT" &&
+    taskType !== "NEXT_ACTION"
+  ) {
+    return { error: "Unknown AI task" };
+  }
+  try {
+    await runAiTask(ctx, id, taskType);
+  } catch (error) {
+    return { error: aiErrorMessage(error) };
+  }
+  revalidatePath(`/conversations/${id}`);
+  return { ok: true };
+}
+
+export async function editDraftAction(
+  _prev: AiPanelResult,
+  formData: FormData,
+): Promise<AiPanelResult> {
+  const ctx = await requireOrg();
+  const conversationId = String(formData.get("conversationId") ?? "");
+  const approvalId = String(formData.get("approvalId") ?? "");
+  const reply = String(formData.get("reply") ?? "");
+  try {
+    await editApprovalDraft(ctx, approvalId, reply);
+  } catch (error) {
+    return { error: aiErrorMessage(error) };
+  }
+  revalidatePath(`/conversations/${conversationId}`);
+  return { ok: true };
+}
+
+export async function decideDraftAction(
+  _prev: AiPanelResult,
+  formData: FormData,
+): Promise<AiPanelResult> {
+  const ctx = await requireOrg();
+  const conversationId = String(formData.get("conversationId") ?? "");
+  const approvalId = String(formData.get("approvalId") ?? "");
+  const decision = String(formData.get("decision") ?? "");
+  if (decision !== "APPROVED" && decision !== "REJECTED") {
+    return { error: "Unknown decision" };
+  }
+  try {
+    await decideApproval(ctx, approvalId, decision, {
+      reason: String(formData.get("reason") ?? "") || undefined,
+      acknowledgeLowConfidence: formData.get("acknowledgeLowConfidence") === "on",
+    });
+  } catch (error) {
+    return { error: aiErrorMessage(error) };
+  }
+  revalidatePath(`/conversations/${conversationId}`);
+  return { ok: true };
+}
+
+export async function applyDraftAction(
+  _prev: AiPanelResult,
+  formData: FormData,
+): Promise<AiPanelResult> {
+  const ctx = await requireOrg();
+  const conversationId = String(formData.get("conversationId") ?? "");
+  const approvalId = String(formData.get("approvalId") ?? "");
+  try {
+    await applyApprovedDraft(ctx, approvalId);
+  } catch (error) {
+    return { error: aiErrorMessage(error) };
+  }
+  revalidatePath(`/conversations/${conversationId}`);
+  return { ok: true };
+}
+
+export async function createSuggestedTaskAction(
+  _prev: AiPanelResult,
+  formData: FormData,
+): Promise<AiPanelResult> {
+  const ctx = await requireOrg();
+  const conversationId = String(formData.get("conversationId") ?? "");
+  const title = String(formData.get("title") ?? "");
+  try {
+    await runTool(ctx, "propose_follow_up_task", { conversationId, title });
+  } catch (error) {
+    return { error: aiErrorMessage(error) };
+  }
+  revalidatePath(`/conversations/${conversationId}`);
+  return { ok: true };
 }
 
 export async function addMessageAction(

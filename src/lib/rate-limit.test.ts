@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { rateLimit, redisConfigured } from "@/lib/rate-limit";
+import { namespacedKey, rateLimit, redisConfigured } from "@/lib/rate-limit";
 
 /**
  * The failure policy is the part worth testing: a limiter that silently stops
@@ -128,5 +128,39 @@ describe("identifierKey", () => {
     const withFirst = identifierKey("person@example.com");
     vi.stubEnv("AUTH_SECRET", "a-different-secret");
     expect(identifierKey("person@example.com")).not.toBe(withFirst);
+  });
+});
+
+describe("e2e rate-limit namespace isolation", () => {
+  it("prefixes keys only outside production", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("OPERANTO_RATE_LIMIT_TEST_NAMESPACE", "run-42");
+    expect(namespacedKey("login:acct:x")).toBe("testns:run-42:login:acct:x");
+    vi.unstubAllEnvs();
+  });
+
+  it("production mode ignores the namespace entirely — no bypass exists", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("OPERANTO_RATE_LIMIT_TEST_NAMESPACE", "run-42");
+    expect(namespacedKey("login:acct:x")).toBe("login:acct:x");
+    vi.unstubAllEnvs();
+  });
+
+  it("without the variable, keys are unchanged", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("OPERANTO_RATE_LIMIT_TEST_NAMESPACE", "");
+    expect(namespacedKey("ingest:ip:y")).toBe("ingest:ip:y");
+    vi.unstubAllEnvs();
+  });
+
+  it("sanitises hostile namespace values", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("OPERANTO_RATE_LIMIT_TEST_NAMESPACE", "a b:c*d" + "x".repeat(100));
+    const key = namespacedKey("k");
+    expect(key.startsWith("testns:")).toBe(true);
+    expect(key).not.toContain(" ");
+    expect(key).not.toContain("*");
+    expect(key.length).toBeLessThan(70);
+    vi.unstubAllEnvs();
   });
 });

@@ -172,6 +172,14 @@ escalations, status transitions, business events, auditability.
 
 ## Operanto Intelligence
 
+> Slice 4 (2026-08-02) delivered the foundation described below: the
+> provider-neutral AI layer (OpenAI behind the interface, deterministic mock
+> default), `AIAction`, the unified `ApprovalRequest` with atomic decisions,
+> `Conversation.handling` takeover/release, tenant-level configuration with
+> budget enforcement, the deny-by-default tool-runtime foundation, and
+> privacy/retention coverage of AI surfaces. See
+> `docs/operanto-ai-handover.md`.
+
 Responsibilities: intent classification, context assembly, summarisation,
 recommended replies, next-best actions, confidence scoring, routing and
 escalation recommendations, AI-human orchestration, tool-use policies,

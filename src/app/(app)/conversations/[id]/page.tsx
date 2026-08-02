@@ -19,11 +19,16 @@ import {
   changeStatusAction,
   createTaskFromConversationAction,
   linkCustomerAction,
+  setHandlingAction,
   toggleConversationTaskAction,
   unlinkCustomerAction,
 } from "./actions";
 import { MessageComposer, NoteForm } from "./composer-forms";
 import { CustomerContextPanel } from "./customer-context-panel";
+import { AiPanel, type AiResultView, type ApprovalView } from "./ai-panel";
+import { listAiActions } from "@/lib/services/ai";
+import { getConversationApproval } from "@/lib/services/approvals";
+import { getAiConfiguration } from "@/lib/services/ai-config";
 
 export const metadata: Metadata = { title: "Conversation" };
 
@@ -50,12 +55,63 @@ export default async function ConversationDetailPage({
   const canMessage = can(ctx.membership.role, "conversations:message");
   const canNote = can(ctx.membership.role, "conversations:note");
 
-  const [members, linkableCustomers] = await Promise.all([
-    canAssign ? listAssignableMembers(ctx) : Promise.resolve([]),
-    canLink && !conversation.customerId
-      ? listLinkableCustomers(ctx)
-      : Promise.resolve([]),
-  ]);
+  const canAiRead = can(ctx.membership.role, "ai:read");
+  const canTakeover = can(ctx.membership.role, "conversations:takeover");
+  const canConfigureAi = can(ctx.membership.role, "ai:configure");
+
+  const [members, linkableCustomers, aiConfig, aiActions, approval] =
+    await Promise.all([
+      canAssign ? listAssignableMembers(ctx) : Promise.resolve([]),
+      canLink && !conversation.customerId
+        ? listLinkableCustomers(ctx)
+        : Promise.resolve([]),
+      canAiRead ? getAiConfiguration(ctx) : Promise.resolve(null),
+      canAiRead ? listAiActions(ctx, conversation.id) : Promise.resolve([]),
+      canAiRead ? getConversationApproval(ctx, conversation.id) : Promise.resolve(null),
+    ]);
+
+  const aiResults: AiResultView[] = aiActions.map((action) => ({
+    id: action.id,
+    taskType: action.taskType,
+    status: action.status,
+    provider: action.provider,
+    model: action.model,
+    confidence: action.confidence,
+    riskLevel: action.riskLevel,
+    createdAt: action.createdAt.toISOString(),
+    output:
+      action.outputJson && !action.redactedAt
+        ? (action.outputJson as Record<string, unknown>)
+        : null,
+    requestedByName: action.requestedBy?.user.name ?? null,
+  }));
+  const approvalView: ApprovalView | null =
+    approval && !approval.redactedAt
+      ? {
+          id: approval.id,
+          status: approval.status,
+          riskLevel: approval.riskLevel,
+          lowConfidence: approval.lowConfidence,
+          reply: String(
+            ((approval.editedPayload ?? approval.originalPayload) as {
+              reply?: string;
+            }).reply ?? "",
+          ),
+          edited: approval.editedPayload !== null,
+          executionClaimed: approval.executionClaimedAt !== null,
+        }
+      : null;
+  const latestNextAction = aiResults.find(
+    (r) => r.taskType === "NEXT_ACTION" && r.output,
+  );
+  const suggestedTaskTitle =
+    typeof latestNextAction?.output?.suggestedTaskTitle === "string"
+      ? latestNextAction.output.suggestedTaskTitle
+      : null;
+  const budgetWarning =
+    aiConfig && aiConfig.enabled && aiConfig.periodRequestCount >= aiConfig.monthlyRequestLimit
+      ? "The AI usage budget for this period is exhausted — requests will be refused until the period resets."
+      : null;
 
   const customer = conversation.customer;
   const counterpart = customer
@@ -76,7 +132,53 @@ export default async function ConversationDetailPage({
         description={`${counterpart} · ${
           CHANNEL_LABELS[conversation.channelType] ?? conversation.channelType
         } · opened ${formatDateTime(conversation.createdAt)}`}
-      />
+      >
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              "rounded-full border px-3 py-1 text-xs",
+              conversation.handling === "HUMAN_CONTROLLED"
+                ? "border-primary text-primary"
+                : "border-border text-muted-foreground",
+            )}
+            title={
+              conversation.handlingChangedAt
+                ? `Changed ${formatDateTime(conversation.handlingChangedAt)}${
+                    conversation.handlingChangedBy
+                      ? ` by ${conversation.handlingChangedBy.user.name}`
+                      : ""
+                  }`
+                : undefined
+            }
+          >
+            {conversation.handling === "HUMAN_CONTROLLED"
+              ? "Human controlled"
+              : "AI assisted"}
+          </span>
+          {canTakeover ? (
+            <form action={setHandlingAction}>
+              <input type="hidden" name="conversationId" value={conversation.id} />
+              <input
+                type="hidden"
+                name="handling"
+                value={
+                  conversation.handling === "HUMAN_CONTROLLED"
+                    ? "AI_ASSISTED"
+                    : "HUMAN_CONTROLLED"
+                }
+              />
+              <button
+                type="submit"
+                className="h-8 rounded-md border border-border px-3 text-xs hover:bg-muted"
+              >
+                {conversation.handling === "HUMAN_CONTROLLED"
+                  ? "Release to AI-assisted"
+                  : "Take control"}
+              </button>
+            </form>
+          ) : null}
+        </div>
+      </PageHeader>
 
       {typeof error === "string" && error ? (
         <p
@@ -148,6 +250,20 @@ export default async function ConversationDetailPage({
               </div>
             ) : null}
           </section>
+
+          {canAiRead && aiConfig ? (
+            <AiPanel
+              conversationId={conversation.id}
+              aiEnabled={aiConfig.enabled}
+              aiMode={aiConfig.mode}
+              budgetWarning={budgetWarning}
+              restricted={restricted}
+              canConfigure={canConfigureAi}
+              results={aiResults}
+              approval={approvalView}
+              suggestedTaskTitle={suggestedTaskTitle}
+            />
+          ) : null}
 
           <section className="rounded-lg border border-border bg-card">
             <h2 className="border-b border-border px-4 py-3 text-sm font-semibold">

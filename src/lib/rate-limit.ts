@@ -66,6 +66,26 @@ type Options = {
   sensitive?: boolean;
 };
 
+/**
+ * TEST INFRASTRUCTURE — namespace isolation for e2e/CI runs.
+ *
+ * Repeated e2e runs share the Upstash account bucket with staging, forcing
+ * cooldown waits between suites. A per-run namespace prefix isolates test
+ * counters WITHOUT weakening any limit: every limit still applies inside the
+ * namespace; there is no bypass, only a separate bucket.
+ *
+ * Hard guard: the namespace is read ONLY when NODE_ENV !== "production".
+ * A production deployment ignores the variable entirely, so no header, env
+ * echo, or configuration mistake can move production traffic off the shared
+ * counters. Verified by unit test.
+ */
+export function namespacedKey(key: string): string {
+  if (process.env.NODE_ENV === "production") return key;
+  const ns = process.env.OPERANTO_RATE_LIMIT_TEST_NAMESPACE;
+  if (!ns) return key;
+  return `testns:${ns.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 48)}:${key}`;
+}
+
 const memory = new Map<string, { count: number; resetAt: number }>();
 
 function memoryLimit(key: string, limit: number, windowMs: number): Verdict {
@@ -131,11 +151,12 @@ async function redisLimit(
 }
 
 export async function rateLimit(
-  key: string,
+  rawKey: string,
   limit: number,
   windowMs: number,
   options: Options = {},
 ): Promise<Verdict> {
+  const key = namespacedKey(rawKey);
   const shared = await redisLimit(key, limit, windowMs);
   if (shared) return shared;
 

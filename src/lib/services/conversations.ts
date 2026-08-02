@@ -133,6 +133,7 @@ export async function getConversation(ctx: OrgContext, id: string) {
       customer: true,
       connection: true,
       assignee: { include: { user: { select: { name: true, email: true } } } },
+      handlingChangedBy: { include: { user: { select: { name: true } } } },
       participants: true,
       messages: {
         orderBy: { createdAt: "asc" },
@@ -759,6 +760,60 @@ export async function unlinkConversationCustomer(ctx: OrgContext, conversationId
     before: { customerId: existing.customerId },
     after: { customerId: null },
   });
+}
+
+/**
+ * Explicit human control of a conversation. In BOTH states AI is advisory
+ * and request-only; HUMAN_CONTROLLED additionally records that a person has
+ * taken ownership, and any future automatic assistance must stand down.
+ */
+export async function setConversationHandling(
+  ctx: OrgContext,
+  conversationId: string,
+  handling: "AI_ASSISTED" | "HUMAN_CONTROLLED",
+) {
+  requirePermission(ctx.membership.role, "conversations:takeover");
+  const existing = await prisma.conversation.findFirst({
+    where: { ...conversationAccessWhere(ctx), id: conversationId },
+  });
+  if (!existing) throw new Error("Conversation not found");
+  if (existing.handling === handling) return existing;
+
+  const claimed = await prisma.conversation.updateMany({
+    where: { ...scope(ctx), id: existing.id, handling: existing.handling },
+    data: {
+      handling,
+      handlingChangedByMembershipId: ctx.membership.id,
+      handlingChangedAt: new Date(),
+    },
+  });
+  if (claimed.count === 0) {
+    throw new Error("The conversation changed while you were editing — reload and retry");
+  }
+
+  const takeover = handling === "HUMAN_CONTROLLED";
+  await prisma.activity.create({
+    data: {
+      organisationId: ctx.organisation.id,
+      conversationId: existing.id,
+      customerId: existing.customerId,
+      actorType: "STAFF",
+      actorUserId: ctx.user.id,
+      actorMembershipId: ctx.membership.id,
+      activityType: takeover ? "conversation.takeover" : "conversation.released",
+      summary: takeover
+        ? "Human took control of the conversation"
+        : "Conversation released to AI-assisted mode",
+    },
+  });
+  await audit(ctx, {
+    eventType: takeover ? "conversation.takeover" : "conversation.released",
+    targetType: "Conversation",
+    targetId: existing.id,
+    before: { handling: existing.handling },
+    after: { handling },
+  });
+  return { ...existing, handling };
 }
 
 /** Customers offered by the link picker. Gated by the same permission as linking. */

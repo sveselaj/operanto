@@ -56,6 +56,26 @@ describe("conversation permissions", () => {
   });
 });
 
+describe("AI and approval permissions", () => {
+  it("all roles may request and read AI assistance; only ADMIN configures", () => {
+    for (const role of ["ADMIN", "SUPERVISOR", "OPERATOR"] as const) {
+      expect(can(role, "ai:run")).toBe(true);
+      expect(can(role, "ai:read")).toBe(true);
+      expect(can(role, "conversations:takeover")).toBe(true);
+    }
+    expect(can("ADMIN", "ai:configure")).toBe(true);
+    expect(can("SUPERVISOR", "ai:configure")).toBe(false);
+    expect(can("OPERATOR", "ai:configure")).toBe(false);
+  });
+
+  it("approval decisions stay at the supervisor tier", () => {
+    expect(can("ADMIN", "approvals:decide")).toBe(true);
+    expect(can("SUPERVISOR", "approvals:decide")).toBe(true);
+    expect(can("OPERATOR", "approvals:decide")).toBe(false);
+    expect(can("OPERATOR", "approvals:read")).toBe(false);
+  });
+});
+
 describe("requirePermission", () => {
   it("throws ForbiddenError with the permission name", () => {
     expect(() => requirePermission("OPERATOR", "members:manage")).toThrow(
