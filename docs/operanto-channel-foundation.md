@@ -63,10 +63,15 @@ lastError`, stamped by the pipeline and shown on the Integrations page
 ## Privacy
 
 Raw channel payloads carry the customer's verbatim words: erasure redacts
-them via the event's `conversationId` anchor; the retention sweep redacts
-PROCESSED/IGNORED payloads after `OPERANTO_PAYLOAD_RETENTION_DAYS` (30 days,
-same as integration events) while FAILED/DEAD_LETTER rows keep payloads for
-replay. Both run on the existing cron.
+them via the event's `conversationId` anchor, and additionally scans the
+organisation's unattributed (never-projected, e.g. dead-lettered) events for
+the erased identity keys, so a dead letter cannot shelter identifying
+content. The retention sweep redacts ALL payloads after
+`OPERANTO_PAYLOAD_RETENTION_DAYS` (30 days) — FAILED/DEAD_LETTER rows keep
+theirs for replay only within that window; no dead-letter row retains a raw
+payload indefinitely. The operational shell (status, attempts, error,
+timestamps) survives, content-minimised. Both sweeps run on the existing
+cron.
 
 ## Simulator
 

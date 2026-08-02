@@ -314,20 +314,77 @@ describeDb("privacy over channel events", () => {
     }
   });
 
-  it("retention redacts old processed payloads but keeps dead letters for replay", async () => {
+  it("retention redacts ALL aged payloads — dead letters keep theirs only inside the window", async () => {
     const ctx = await makeCtx("org-a");
+    const connection = await simulatorConnection(ctx.organisation.id);
     await ingestSimulatedMessage(ctx.organisation.id, "pronatona", {
       runId: "ret-ch-1",
     });
+    // A dead-lettered event with identifying content in its payload.
+    const dead = await storeChannelPayload(
+      "SIMULATOR",
+      messagePayload(connection.id, {
+        timestamp: "not-a-date",
+        body: "identifying apartment enquiry",
+      }),
+    );
+    for (let i = 0; i < 5; i++) {
+      await processChannelInboundEvent((dead as { eventId: string }).eventId);
+    }
+
+    // Fresh dead letters keep their payload (replay window)…
+    let sweep = await redactExpiredChannelPayloads();
+    const freshDead = await db.channelInboundEvent.findUniqueOrThrow({
+      where: { id: (dead as { eventId: string }).eventId },
+    });
+    expect(freshDead.status).toBe("DEAD_LETTER");
+    expect(freshDead.payloadRedactedAt).toBeNull();
+
+    // …but NO payload survives past the retention window, dead or not.
     const old = new Date(Date.now() - 90 * 86_400_000);
     await db.channelInboundEvent.updateMany({ data: { receivedAt: old } });
-    const swept = await redactExpiredChannelPayloads();
-    expect(swept.redacted).toBeGreaterThanOrEqual(1);
-    const events = await db.channelInboundEvent.findMany({
-      where: { status: "PROCESSED" },
-    });
+    sweep = await redactExpiredChannelPayloads();
+    expect(sweep.redacted).toBeGreaterThanOrEqual(2);
+    const events = await db.channelInboundEvent.findMany();
     for (const event of events) {
+      expect(event.payloadRedactedAt).not.toBeNull();
       expect(JSON.stringify(event.rawPayload)).not.toContain("apartment");
     }
+    // Operational shell survives, content-minimised.
+    const deadAfter = await db.channelInboundEvent.findUniqueOrThrow({
+      where: { id: (dead as { eventId: string }).eventId },
+    });
+    expect(deadAfter.status).toBe("DEAD_LETTER");
+    expect(deadAfter.attemptCount).toBe(5);
+  });
+
+  it("erasure clears identifying payloads even in unattributed dead letters", async () => {
+    const ctx = await makeCtx("org-a");
+    const connection = await simulatorConnection(ctx.organisation.id);
+    const customer = await db.customer.create({
+      data: {
+        organisationId: ctx.organisation.id,
+        name: "Dead Letter Person",
+        email: "deadletter@example.test",
+        emailNormalized: "deadletter@example.test",
+      },
+    });
+    // A failing event that references the customer's e-mail but never
+    // projects — no conversation anchor exists.
+    const dead = await storeChannelPayload(
+      "SIMULATOR",
+      messagePayload(connection.id, {
+        timestamp: "not-a-date",
+        email: "deadletter@example.test",
+      }),
+    );
+    await processChannelInboundEvent((dead as { eventId: string }).eventId);
+
+    await eraseCustomer(ctx, customer.id, "Art. 17");
+    const event = await db.channelInboundEvent.findUniqueOrThrow({
+      where: { id: (dead as { eventId: string }).eventId },
+    });
+    expect(event.payloadRedactedAt).not.toBeNull();
+    expect(JSON.stringify(event.rawPayload)).not.toContain("deadletter@example.test");
   });
 });

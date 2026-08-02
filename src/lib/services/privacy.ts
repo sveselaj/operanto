@@ -216,6 +216,38 @@ export async function eraseCustomer(
           },
         });
       }
+      // Dead-lettered or failed channel events may never have projected, so
+      // they carry no conversation anchor. Scan the organisation's small set
+      // of unattributed, unredacted events for the erased identity keys —
+      // the same pattern the InboundEvent scan uses for source lead ids.
+      const identityKeys = [
+        customer.email,
+        customer.emailNormalized,
+        ...(await tx.customerIdentity.findMany({
+          where: { ...scope(ctx), customerId: customer.id },
+          select: { externalId: true },
+        })).map((row) => row.externalId),
+        ...(await tx.conversationParticipant.findMany({
+          where: { ...scope(ctx), customerId: customer.id, externalRef: { not: null } },
+          select: { externalRef: true },
+        })).map((row) => row.externalRef),
+      ].filter((key): key is string => Boolean(key));
+      if (identityKeys.length > 0) {
+        const unattributed = await tx.channelInboundEvent.findMany({
+          where: { ...scope(ctx), conversationId: null, payloadRedactedAt: null },
+          select: { id: true, rawPayload: true },
+        });
+        const affected = unattributed.filter((event) => {
+          const blob = JSON.stringify(event.rawPayload);
+          return identityKeys.some((key) => blob.includes(key));
+        });
+        for (const event of affected) {
+          await tx.channelInboundEvent.update({
+            where: { id: event.id },
+            data: { rawPayload: { redacted: true }, payloadRedactedAt: new Date() },
+          });
+        }
+      }
 
       // 6. The source lead id is a foreign key straight back to the person in
       //    Pronatona. Clearing the payload copy while leaving it on the
@@ -489,9 +521,11 @@ export async function redactExpiredMessages(): Promise<{
 
 /**
  * Retention sweep for raw CHANNEL payloads — same rationale and window as
- * InboundEvent.rawPayload (OPERANTO_PAYLOAD_RETENTION_DAYS, default 30):
- * once processed and old, a verbatim copy of the customer's words is pure
- * liability. FAILED and DEAD_LETTER rows keep their payloads for replay.
+ * InboundEvent.rawPayload (OPERANTO_PAYLOAD_RETENTION_DAYS, default 30).
+ * ALL statuses are swept: FAILED and DEAD_LETTER rows keep their payloads
+ * for replay only WITHIN the window — replay value expires with it, and no
+ * dead-letter row may retain a raw payload indefinitely. The operational
+ * shell (status, attempts, error, timestamps) survives for auditability.
  */
 export async function redactExpiredChannelPayloads(limit = 500): Promise<{
   redacted: number;
@@ -499,25 +533,13 @@ export async function redactExpiredChannelPayloads(limit = 500): Promise<{
 }> {
   const retentionDays = payloadRetentionDays();
   const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+  const expired = await prisma.channelInboundEvent.findMany({
+    where: { payloadRedactedAt: null, receivedAt: { lt: cutoff } },
+    select: { id: true },
+    take: limit,
+  });
   const result = await prisma.channelInboundEvent.updateMany({
-    where: {
-      payloadRedactedAt: null,
-      status: { in: ["PROCESSED", "IGNORED"] },
-      receivedAt: { lt: cutoff },
-      id: {
-        in: (
-          await prisma.channelInboundEvent.findMany({
-            where: {
-              payloadRedactedAt: null,
-              status: { in: ["PROCESSED", "IGNORED"] },
-              receivedAt: { lt: cutoff },
-            },
-            select: { id: true },
-            take: limit,
-          })
-        ).map((row) => row.id),
-      },
-    },
+    where: { id: { in: expired.map((row) => row.id) }, payloadRedactedAt: null },
     data: { rawPayload: { redacted: true }, payloadRedactedAt: new Date() },
   });
   return { redacted: result.count, retentionDays };
