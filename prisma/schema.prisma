@@ -80,6 +80,8 @@ model Organisation {
   aiActions                AIAction[]
   approvalRequests         ApprovalRequest[]
   aiConfiguration          AiConfiguration?
+  channelInboundEvents     ChannelInboundEvent[]
+  consents                 Consent[]
 }
 
 model User {
@@ -134,6 +136,7 @@ model Membership {
   requestedApprovals    ApprovalRequest[]         @relation("ApprovalRequester")
   reviewingApprovals    ApprovalRequest[]         @relation("ApprovalReviewer")
   decidedApprovals      ApprovalRequest[]         @relation("ApprovalDecider")
+  consentUpdates        Consent[]                 @relation("ConsentUpdater")
 
   @@unique([organisationId, userId])
   @@index([userId])
@@ -295,6 +298,7 @@ model Customer {
   participations ConversationParticipant[]
   channelIdentities CustomerIdentity[]
   aiActions     AIAction[]
+  consents      Consent[]
 
   @@unique([organisationId, sourceSystem, sourceCustomerId])
   @@index([organisationId, emailNormalized])
@@ -531,6 +535,11 @@ model ChannelConnection {
   type           ChannelType
   displayName    String
   status         ChannelConnectionStatus @default(ACTIVE)
+  /// Connection health, stamped by the ingestion pipeline.
+  lastReceivedAt   DateTime?
+  lastSuccessfulAt DateTime?
+  lastErrorAt      DateTime?
+  lastError        String?
   createdAt      DateTime                @default(now())
   updatedAt      DateTime                @updatedAt
 
@@ -540,9 +549,83 @@ model ChannelConnection {
   organisation  Organisation   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   conversations Conversation[]
   messages      Message[]
+  inboundEvents ChannelInboundEvent[]
 
   @@unique([organisationId, type, displayName])
   @@index([organisationId])
+}
+
+enum ChannelEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  IGNORED
+  FAILED
+  DEAD_LETTER
+}
+
+/// Raw channel webhook/simulator payloads — the store-then-process pipeline
+/// for conversation channels, mirroring InboundEvent: persist raw with a
+/// tenant-safe idempotency constraint, acknowledge, process asynchronously
+/// with an atomic claim, bounded retries, and a dead-letter state. Payloads
+/// hold customer text, so they follow the same retention redaction as
+/// InboundEvent.rawPayload and are redacted on erasure via conversationId.
+model ChannelInboundEvent {
+  id                  String             @id @default(cuid())
+  organisationId      String
+  channelConnectionId String
+  /// "message" | "status" — what the adapter classified the payload as.
+  eventKind           String
+  /// Provider-derived idempotency key; unique per connection (connections
+  /// are organisation-owned, so this is tenant-scoped by construction).
+  dedupeKey           String
+  rawPayload          Json
+  payloadRedactedAt   DateTime?
+  status              ChannelEventStatus @default(RECEIVED)
+  attemptCount        Int                @default(0)
+  lastError           String?
+  /// Set during processing — the erasure anchor for payload redaction.
+  conversationId      String?
+  receivedAt          DateTime           @default(now())
+  processedAt         DateTime?
+
+  organisation Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  connection   ChannelConnection @relation(fields: [channelConnectionId], references: [id], onDelete: Cascade)
+  conversation Conversation?     @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@unique([channelConnectionId, dedupeKey])
+  @@index([organisationId, status, receivedAt])
+  @@index([organisationId, conversationId])
+}
+
+enum ConsentStatus {
+  UNKNOWN
+  OPTED_IN
+  OPTED_OUT
+}
+
+/// Per-customer, per-channel consent state — the policy foundation every
+/// future outbound send must check. Rows are compliance evidence: they are
+/// kept through erasure (they carry no personal data beyond the tombstoned
+/// customer reference) and never removed by retention.
+model Consent {
+  id                    String        @id @default(cuid())
+  organisationId        String
+  customerId            String
+  channelType           ChannelType
+  status                ConsentStatus @default(UNKNOWN)
+  /// Provenance: "inbound_keyword" | "manual" — how this state was set.
+  source                String
+  updatedByMembershipId String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  updatedBy    Membership?  @relation("ConsentUpdater", fields: [updatedByMembershipId], references: [id], onDelete: SetNull)
+
+  @@unique([organisationId, customerId, channelType])
+  @@index([organisationId, customerId])
 }
 
 enum ConversationHandling {
@@ -592,6 +675,7 @@ model Conversation {
   tasks        Task[]
   aiActions    AIAction[]
   approvalRequests ApprovalRequest[]
+  channelInboundEvents ChannelInboundEvent[]
 
   @@unique([organisationId, channelConnectionId, providerThreadId])
   @@index([organisationId, lastMessageAt])
@@ -641,6 +725,10 @@ model Message {
   providerMessageId   String?
   providerTimestamp   DateTime?
   deliveryStatus      MessageDeliveryStatus @default(RECORDED)
+  /// Stamped by the delivery state machine on every accepted transition.
+  statusUpdatedAt     DateTime?
+  /// Provider failure detail when deliveryStatus is FAILED.
+  errorMessage        String?
   metadata            Json?
   /// Set when the body was replaced by the retention sweep or an erasure.
   redactedAt          DateTime?

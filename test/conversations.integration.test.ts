@@ -662,10 +662,12 @@ describeDb("privacy lifecycle", () => {
     expect(meta.conversationsRedacted).toBe(1);
     expect(Number(meta.messagesRedacted)).toBeGreaterThanOrEqual(2);
 
-    // The tombstone is never re-matched: a replayed scenario stays unlinked.
-    await db.message.deleteMany();
-    await db.conversation.deleteMany();
-    const relinked = await ingestSimulatedMessage(ctx.organisation.id, "nagelista");
+    // The tombstone is never re-matched: a LATER inbound message from the
+    // same sender arrives unlinked (event-level dedupe makes byte-identical
+    // replays no-ops, so recognition is what must be proven dead).
+    const relinked = await ingestSimulatedMessage(ctx.organisation.id, "nagelista", {
+      runId: "post-erasure",
+    });
     expect(relinked.customerId).toBeNull();
   });
 

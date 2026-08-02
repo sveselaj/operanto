@@ -1,38 +1,34 @@
 import "server-only";
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { auditSystem } from "@/lib/audit";
-import { normalizeEmail } from "@/lib/normalize";
-import { resolveCustomerByChannelIdentity } from "@/lib/services/customer-identity";
+import type { SimulatorPayload } from "@/lib/channels/simulator-adapter";
+import {
+  processChannelInboundEvent,
+  storeChannelPayload,
+} from "@/lib/services/channel-ingest";
 
 /**
  * Deterministic conversation simulator — development, tests, and staging ONLY.
  *
- * It stands in for a live channel adapter: normalised inbound messages enter
- * through the same shapes (connection → thread → message, dedupe by unique
- * constraint) that a real adapter will use in a later slice. No randomness,
- * no external calls, no AI, no outbound sends.
+ * Since Slice 5A it is a thin driver over the CANONICAL channel pipeline: it
+ * builds a synthetic provider payload and pushes it through the same
+ * store-then-process path every live adapter will use (tenant-safe dedupe by
+ * constraint, atomic claim, identity ladder, consent keywords, delivery
+ * statuses). No randomness, no external calls, no AI, no outbound sends.
  *
- * Guard rails:
- * - Refuses to run in production unless OPERANTO_SIMULATOR_ENABLED=1 is set
- *   explicitly (mirrors the seed's test-fixture guard).
- * - Customer linking uses exact e-mail matching only, never fuzzy rules, and
- *   never matches erased tombstones — consistent with the identity ladder in
- *   src/lib/events/matching.ts. Restricted customers are stored-and-held,
- *   like inbound integration events.
+ * Guard rails unchanged: refuses production unless OPERANTO_SIMULATOR_ENABLED=1;
+ * linking is exact-match only and never touches erased tombstones.
  */
 
 export type SimulatorScenarioKey = "nagelista" | "pronatona";
 
 type SimulatorScenario = {
   key: SimulatorScenarioKey;
-  /** Stable thread id — re-running a scenario is an idempotent duplicate. */
   providerThreadId: string;
   providerMessageId: string;
   subject: string;
   senderDisplayName: string;
   senderExternalRef: string;
-  /** Linked when a customer with exactly this e-mail exists (and is not erased). */
   linkEmail: string;
   body: string;
 };
@@ -74,22 +70,10 @@ export type SimulatedIngestResult = {
   duplicate: boolean;
 };
 
-/**
- * Ingest one scenario message for an organisation. Runs with SYSTEM authority
- * (there is no signed-in user during channel ingestion), but every write is
- * explicitly organisation-scoped and audited.
- */
 export async function ingestSimulatedMessage(
   organisationId: string,
   scenarioKey: SimulatorScenarioKey,
-  options: {
-    /**
-     * Optional deterministic run id appended to the scenario's thread and
-     * message ids, so test harnesses can replay a scenario as a NEW thread
-     * (e.g. one per e2e run) while staying fully reproducible within a run.
-     */
-    runId?: string;
-  } = {},
+  options: { runId?: string } = {},
 ): Promise<SimulatedIngestResult> {
   if (!isSimulatorEnabled()) {
     throw new Error(
@@ -115,40 +99,43 @@ export async function ingestSimulatedMessage(
   });
   if (!organisation) throw new Error("Organisation not found");
 
-  const result = await prisma.$transaction(async (tx) => {
-    const connection = await tx.channelConnection.upsert({
-      where: {
-        organisationId_type_displayName: {
-          organisationId,
-          type: "SIMULATOR",
-          displayName: "Simulator",
-        },
-      },
-      update: {},
-      create: { organisationId, type: "SIMULATOR", displayName: "Simulator" },
-    });
-
-    // Identity ladder for channel ingestion, exact matches only, erased
-    // tombstones never re-matched: 1) a taught channel identity for this
-    // sender (see linkConversationCustomer — linking "teaches" the handle),
-    // 2) the scenario's e-mail. Never fuzzy, never creates customers.
-    const customer =
-      (await resolveCustomerByChannelIdentity(
-        tx,
+  const connection = await prisma.channelConnection.upsert({
+    where: {
+      organisationId_type_displayName: {
         organisationId,
-        "SIMULATOR",
-        scenario.senderExternalRef,
-      )) ??
-      (await tx.customer.findFirst({
-        where: {
-          organisationId,
-          erasedAt: null,
-          emailNormalized: normalizeEmail(scenario.linkEmail),
-        },
-      }));
+        type: "SIMULATOR",
+        displayName: "Simulator",
+      },
+    },
+    update: {},
+    create: { organisationId, type: "SIMULATOR", displayName: "Simulator" },
+  });
 
-    const now = new Date();
-    const existing = await tx.conversation.findUnique({
+  const payload: SimulatorPayload = {
+    simulator: true,
+    connectionId: connection.id,
+    eventId: scenario.providerMessageId,
+    kind: "message",
+    thread: scenario.providerThreadId,
+    message: {
+      id: scenario.providerMessageId,
+      body: scenario.body,
+      subject: scenario.subject,
+      timestamp: new Date().toISOString(),
+      sender: {
+        externalId: scenario.senderExternalRef,
+        displayName: scenario.senderDisplayName,
+        email: scenario.linkEmail,
+      },
+    },
+  };
+
+  const stored = await storeChannelPayload("SIMULATOR", payload);
+  if ("rejected" in stored) {
+    throw new Error(`Simulator payload rejected: ${stored.rejected}`);
+  }
+  if (stored.duplicate) {
+    const conversation = await prisma.conversation.findUnique({
       where: {
         organisationId_channelConnectionId_providerThreadId: {
           organisationId,
@@ -156,113 +143,42 @@ export async function ingestSimulatedMessage(
           providerThreadId: scenario.providerThreadId,
         },
       },
+      select: { id: true, customerId: true },
     });
-
-    const conversation =
-      existing ??
-      (await tx.conversation.create({
-        data: {
-          organisationId,
-          customerId: customer?.id ?? null,
-          channelConnectionId: connection.id,
-          channelType: "SIMULATOR",
-          providerThreadId: scenario.providerThreadId,
-          subject: scenario.subject,
-          lastMessageAt: now,
-          lastInboundAt: now,
-        },
-      }));
-
-    if (!existing) {
-      await tx.conversationParticipant.create({
-        data: {
-          organisationId,
-          conversationId: conversation.id,
-          type: "CUSTOMER",
-          customerId: customer?.id ?? null,
-          displayName: customer ? null : scenario.senderDisplayName,
-          externalRef: scenario.senderExternalRef,
-        },
-      });
-      await tx.activity.create({
-        data: {
-          organisationId,
-          conversationId: conversation.id,
-          customerId: customer?.id ?? null,
-          actorType: "SYSTEM",
-          activityType: "conversation.created",
-          sourceSystem: "SIMULATOR",
-          summary: "Conversation opened by simulated inbound message",
-        },
-      });
+    if (!conversation) {
+      throw new Error(
+        "Duplicate simulator event but its conversation no longer exists — use a fresh runId",
+      );
     }
-
-    let messageId: string | null = null;
-    let duplicate = false;
-    try {
-      const message = await tx.message.create({
-        data: {
-          organisationId,
-          conversationId: conversation.id,
-          channelConnectionId: connection.id,
-          direction: "INBOUND",
-          senderType: "CUSTOMER",
-          body: scenario.body,
-          providerMessageId: scenario.providerMessageId,
-          providerTimestamp: now,
-          metadata: { simulatorScenario: scenario.key },
-        },
-      });
-      messageId = message.id;
-      await tx.conversation.update({
-        where: { id: conversation.id },
-        data: { lastMessageAt: now, lastInboundAt: now },
-      });
-      await tx.activity.create({
-        data: {
-          organisationId,
-          conversationId: conversation.id,
-          customerId: conversation.customerId,
-          actorType: "CUSTOMER",
-          activityType: "conversation.inbound_message",
-          sourceSystem: "SIMULATOR",
-          summary: "Inbound message received (simulator)",
-        },
-      });
-    } catch (error) {
-      // The tenancy-scoped unique constraint is the dedupe mechanism: a
-      // replayed provider message id is a no-op duplicate, exactly as the
-      // event pipeline treats replayed event ids.
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      ) {
-        duplicate = true;
-      } else {
-        throw error;
-      }
-    }
-
     return {
       conversationId: conversation.id,
-      messageId,
+      messageId: null,
       customerId: conversation.customerId,
-      duplicate,
+      duplicate: true,
     };
+  }
+
+  const result = await processChannelInboundEvent(stored.eventId);
+  if (result.status !== "PROCESSED" || !result.conversationId) {
+    throw new Error(`Simulator event did not process (status: ${result.status})`);
+  }
+
+  await auditSystem(organisationId, "SYSTEM", {
+    eventType: "conversation.inbound_received",
+    targetType: "Conversation",
+    targetId: result.conversationId,
+    after: {
+      scenario: scenario.key,
+      messageId: result.messageId,
+      customerId: result.customerId,
+      channelType: "SIMULATOR",
+    },
   });
 
-  if (!result.duplicate) {
-    await auditSystem(organisationId, "SYSTEM", {
-      eventType: "conversation.inbound_received",
-      targetType: "Conversation",
-      targetId: result.conversationId,
-      after: {
-        scenario: scenario.key,
-        messageId: result.messageId,
-        customerId: result.customerId,
-        channelType: "SIMULATOR",
-      },
-    });
-  }
-  return result;
+  return {
+    conversationId: result.conversationId,
+    messageId: result.messageId,
+    customerId: result.customerId,
+    duplicate: false,
+  };
 }

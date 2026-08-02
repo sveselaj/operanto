@@ -51,13 +51,29 @@ export async function CustomerContextPanel({
                 Known channel identities
               </h3>
               <ul className="space-y-0.5">
-                {customer.channelIdentities.map((identity) => (
-                  <li key={identity.id} className="text-muted-foreground">
-                    {CHANNEL_LABELS[identity.channelType] ?? identity.channelType}
-                    {" · "}
-                    <span className="font-mono text-xs">{identity.externalId}</span>
-                  </li>
-                ))}
+                {customer.channelIdentities.map((identity) => {
+                  const consent = customer.consents.find(
+                    (c) => c.channelType === identity.channelType,
+                  );
+                  return (
+                    <li key={identity.id} className="text-muted-foreground">
+                      {CHANNEL_LABELS[identity.channelType] ?? identity.channelType}
+                      {" · "}
+                      <span className="font-mono text-xs">{identity.externalId}</span>
+                      {consent && consent.status !== "UNKNOWN" ? (
+                        <span
+                          className={
+                            consent.status === "OPTED_OUT"
+                              ? "ml-1 rounded-full border border-danger/60 px-1.5 text-[10px] text-danger"
+                              : "ml-1 rounded-full border border-border px-1.5 text-[10px]"
+                          }
+                        >
+                          {consent.status === "OPTED_OUT" ? "Opted out" : "Opted in"}
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ) : null}

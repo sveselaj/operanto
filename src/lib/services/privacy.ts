@@ -203,6 +203,18 @@ export async function eraseCustomer(
             redactedAt: new Date(),
           },
         });
+        // Raw channel payloads hold the customer's verbatim words.
+        await tx.channelInboundEvent.updateMany({
+          where: {
+            ...scope(ctx),
+            conversationId: { in: conversationIds },
+            payloadRedactedAt: null,
+          },
+          data: {
+            rawPayload: { redacted: true },
+            payloadRedactedAt: new Date(),
+          },
+        });
       }
 
       // 6. The source lead id is a foreign key straight back to the person in
@@ -473,4 +485,40 @@ export async function redactExpiredMessages(): Promise<{
   }
 
   return { organisations: organisations.length, redacted, aiRedacted };
+}
+
+/**
+ * Retention sweep for raw CHANNEL payloads — same rationale and window as
+ * InboundEvent.rawPayload (OPERANTO_PAYLOAD_RETENTION_DAYS, default 30):
+ * once processed and old, a verbatim copy of the customer's words is pure
+ * liability. FAILED and DEAD_LETTER rows keep their payloads for replay.
+ */
+export async function redactExpiredChannelPayloads(limit = 500): Promise<{
+  redacted: number;
+  retentionDays: number;
+}> {
+  const retentionDays = payloadRetentionDays();
+  const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+  const result = await prisma.channelInboundEvent.updateMany({
+    where: {
+      payloadRedactedAt: null,
+      status: { in: ["PROCESSED", "IGNORED"] },
+      receivedAt: { lt: cutoff },
+      id: {
+        in: (
+          await prisma.channelInboundEvent.findMany({
+            where: {
+              payloadRedactedAt: null,
+              status: { in: ["PROCESSED", "IGNORED"] },
+              receivedAt: { lt: cutoff },
+            },
+            select: { id: true },
+            take: limit,
+          })
+        ).map((row) => row.id),
+      },
+    },
+    data: { rawPayload: { redacted: true }, payloadRedactedAt: new Date() },
+  });
+  return { redacted: result.count, retentionDays };
 }
