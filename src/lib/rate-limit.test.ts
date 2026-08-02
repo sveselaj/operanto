@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { rateLimit, redisConfigured } from "@/lib/rate-limit";
+import { deploymentEnvironment, namespacedKey, rateLimit, redisConfigured } from "@/lib/rate-limit";
 
 /**
  * The failure policy is the part worth testing: a limiter that silently stops
@@ -128,5 +128,103 @@ describe("identifierKey", () => {
     const withFirst = identifierKey("person@example.com");
     vi.stubEnv("AUTH_SECRET", "a-different-secret");
     expect(identifierKey("person@example.com")).not.toBe(withFirst);
+  });
+});
+
+describe("e2e rate-limit namespace isolation (environment policy)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  function stubEnvBase() {
+    vi.stubEnv("VERCEL_ENV", "");
+    vi.stubEnv("OPERANTO_ENV", "");
+    vi.stubEnv("CI", "");
+    vi.stubEnv("OPERANTO_RATE_LIMIT_TEST_NAMESPACE", "run-42");
+  }
+
+  it("test environment permits a configured namespace", () => {
+    stubEnvBase();
+    vi.stubEnv("NODE_ENV", "test");
+    expect(namespacedKey("login:acct:x")).toBe("testns:run-42:login:acct:x");
+  });
+
+  it("CI environment permits it", () => {
+    stubEnvBase();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CI", "true");
+    expect(namespacedKey("login:acct:x")).toBe("testns:run-42:login:acct:x");
+  });
+
+  it("explicitly configured staging permits it", () => {
+    stubEnvBase();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("OPERANTO_ENV", "staging");
+    expect(namespacedKey("login:acct:x")).toBe("testns:run-42:login:acct:x");
+  });
+
+  it("preview permits it", () => {
+    stubEnvBase();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERCEL_ENV", "preview");
+    expect(namespacedKey("login:acct:x")).toBe("testns:run-42:login:acct:x");
+  });
+
+  it("production refuses it, and an unknown environment fails closed", () => {
+    stubEnvBase();
+    vi.stubEnv("NODE_ENV", "production");
+    expect(deploymentEnvironment()).toBe("production");
+    expect(namespacedKey("login:acct:x")).toBe("login:acct:x");
+    vi.stubEnv("OPERANTO_ENV", "production");
+    vi.stubEnv("NODE_ENV", "test");
+    expect(namespacedKey("login:acct:x")).toBe("login:acct:x");
+  });
+
+  it("VERCEL_ENV=production overrides any permissive application setting", () => {
+    stubEnvBase();
+    vi.stubEnv("VERCEL_ENV", "production");
+    vi.stubEnv("OPERANTO_ENV", "staging");
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("CI", "true");
+    expect(deploymentEnvironment()).toBe("production");
+    expect(namespacedKey("login:acct:x")).toBe("login:acct:x");
+  });
+
+  it("client-supplied namespace input is ignored — only the env var counts", () => {
+    // The namespace comes exclusively from process.env; nothing in the rate
+    // limiter reads a request. A hostile key that IMITATES a namespaced key
+    // is treated as an opaque key, never as a namespace instruction.
+    stubEnvBase();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("OPERANTO_RATE_LIMIT_TEST_NAMESPACE", "");
+    expect(namespacedKey("testns:evil:login:acct:x")).toBe(
+      "testns:evil:login:acct:x",
+    );
+    // And with a real namespace active, the hostile prefix stays inside the
+    // key — the account/IP dimension is preserved, never replaced.
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("OPERANTO_RATE_LIMIT_TEST_NAMESPACE", "run-42");
+    expect(namespacedKey("testns:evil:login:acct:x")).toBe(
+      "testns:run-42:testns:evil:login:acct:x",
+    );
+  });
+
+  it("ordinary production keys are byte-identical with and without the variable", () => {
+    stubEnvBase();
+    vi.stubEnv("NODE_ENV", "production");
+    const withNamespace = namespacedKey("ingest:ip:abc");
+    vi.stubEnv("OPERANTO_RATE_LIMIT_TEST_NAMESPACE", "");
+    const without = namespacedKey("ingest:ip:abc");
+    expect(withNamespace).toBe("ingest:ip:abc");
+    expect(withNamespace).toBe(without);
+  });
+
+  it("sanitises hostile namespace values", () => {
+    stubEnvBase();
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("OPERANTO_RATE_LIMIT_TEST_NAMESPACE", "a b:c*d" + "x".repeat(100));
+    const key = namespacedKey("k");
+    expect(key.startsWith("testns:")).toBe(true);
+    expect(key).not.toContain(" ");
+    expect(key).not.toContain("*");
+    expect(key.length).toBeLessThan(70);
   });
 });

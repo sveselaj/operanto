@@ -10,12 +10,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatDateTime } from "@/lib/format";
 import { renameOrganisationAction } from "./actions";
+import { AiConfigForm } from "./ai-config-form";
+import { getAiConfiguration } from "@/lib/services/ai-config";
 
 export const metadata: Metadata = { title: "Organisation settings" };
 
 export default async function OrganisationSettingsPage() {
   const ctx = await requireOrg();
   if (!can(ctx.membership.role, "org:manage")) redirect("/dashboard");
+  const aiConfig = await getAiConfiguration(ctx);
 
   return (
     <>
@@ -61,6 +64,29 @@ export default async function OrganisationSettingsPage() {
             <dt className="text-muted-foreground">Created</dt>
             <dd>{formatDateTime(ctx.organisation.createdAt)}</dd>
           </dl>
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6 max-w-xl">
+        <CardHeader>
+          <CardTitle className="text-base">AI assistance</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="mb-3 text-xs text-muted-foreground">
+            AI output is always advisory: a person reviews and approves every
+            draft, and nothing is ever sent externally. Live mode additionally
+            requires the deployment-level opt-in and a provider key.
+          </p>
+          <AiConfigForm
+            config={{
+              enabled: aiConfig.enabled,
+              mode: aiConfig.mode,
+              model: aiConfig.model,
+              monthlyRequestLimit: aiConfig.monthlyRequestLimit,
+              periodRequestCount: aiConfig.periodRequestCount,
+              permittedTaskTypes: aiConfig.permittedTaskTypes,
+            }}
+          />
         </CardContent>
       </Card>
     </>

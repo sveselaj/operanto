@@ -77,6 +77,9 @@ model Organisation {
   messages                 Message[]
   conversationNotes        ConversationNote[]
   customerIdentities       CustomerIdentity[]
+  aiActions                AIAction[]
+  approvalRequests         ApprovalRequest[]
+  aiConfiguration          AiConfiguration?
 }
 
 model User {
@@ -126,6 +129,11 @@ model Membership {
   sentMessages          Message[]      @relation("MessageSender")
   conversationNotes     ConversationNote[]        @relation("NoteAuthor")
   conversationPresences ConversationParticipant[] @relation("ParticipantMembership")
+  handlingChanges       Conversation[]            @relation("HandlingChanger")
+  requestedAiActions    AIAction[]                @relation("AIActionRequester")
+  requestedApprovals    ApprovalRequest[]         @relation("ApprovalRequester")
+  reviewingApprovals    ApprovalRequest[]         @relation("ApprovalReviewer")
+  decidedApprovals      ApprovalRequest[]         @relation("ApprovalDecider")
 
   @@unique([organisationId, userId])
   @@index([userId])
@@ -286,6 +294,7 @@ model Customer {
   conversations Conversation[]
   participations ConversationParticipant[]
   channelIdentities CustomerIdentity[]
+  aiActions     AIAction[]
 
   @@unique([organisationId, sourceSystem, sourceCustomerId])
   @@index([organisationId, emailNormalized])
@@ -499,10 +508,14 @@ enum MessageSenderType {
   SYSTEM
 }
 
-/// Delivery lifecycle foundation. Slice 1 (manual + simulator channels) only
-/// ever writes RECORDED — nothing is transmitted anywhere. The remaining
-/// values are the contract live channel adapters will drive in a later slice;
-/// they are declared now so that migration is additive, not corrective.
+/// Delivery lifecycle foundation. RECORDED is the explicit LOCAL/UNSENT
+/// state: the message exists only inside Operanto and nothing has been
+/// transmitted anywhere — including messages created by approving an AI
+/// draft. INVARIANT for future channel workers: a RECORDED message must
+/// NEVER be sent automatically; sending is a separate, explicit operation
+/// that re-checks permission, conversation access, restriction, consent,
+/// messaging window, template requirements, provider connection,
+/// idempotency, and the current approval state (Slice 5).
 enum MessageDeliveryStatus {
   RECORDED
   QUEUED
@@ -532,9 +545,20 @@ model ChannelConnection {
   @@index([organisationId])
 }
 
+enum ConversationHandling {
+  AI_ASSISTED
+  HUMAN_CONTROLLED
+}
+
 model Conversation {
   id                    String               @id @default(cuid())
   organisationId        String
+  /// Who is steering this conversation. AI never acts autonomously in either
+  /// state — HUMAN_CONTROLLED additionally documents that a person has taken
+  /// explicit ownership and AI runs only on direct request.
+  handling                      ConversationHandling @default(AI_ASSISTED)
+  handlingChangedByMembershipId String?
+  handlingChangedAt             DateTime?
   /// Null while the counterpart is not linked to a Customer record; the
   /// CUSTOMER participant row then carries their display identity.
   customerId            String?
@@ -559,12 +583,15 @@ model Conversation {
   connection   ChannelConnection? @relation(fields: [channelConnectionId], references: [id], onDelete: Restrict)
   assignee     Membership?        @relation("ConversationAssignee", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
   createdBy    Membership?        @relation("ConversationCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
+  handlingChangedBy Membership?   @relation("HandlingChanger", fields: [handlingChangedByMembershipId], references: [id], onDelete: SetNull)
 
   participants ConversationParticipant[]
   messages     Message[]
   notes        ConversationNote[]
   activities   Activity[]
   tasks        Task[]
+  aiActions    AIAction[]
+  approvalRequests ApprovalRequest[]
 
   @@unique([organisationId, channelConnectionId, providerThreadId])
   @@index([organisationId, lastMessageAt])
@@ -675,6 +702,165 @@ model ConversationNote {
   author       Membership?  @relation("NoteAuthor", fields: [authorMembershipId], references: [id], onDelete: SetNull)
 
   @@index([conversationId, createdAt])
+}
+
+// ── AI handover (Operanto Intelligence, Slice 4) ───────────────────
+//
+// AI is advisory: every output is a suggestion until a human approves it,
+// and nothing here can send externally or mutate business records directly.
+// See docs/operanto-ai-handover.md.
+
+enum AITaskType {
+  SUMMARY
+  CLASSIFICATION
+  REPLY_DRAFT
+  NEXT_ACTION
+}
+
+enum AIActionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REJECTED
+  APPROVED
+  SUPERSEDED
+}
+
+enum AIRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  BLOCKED
+}
+
+enum AIMode {
+  MOCK
+  LIVE
+}
+
+enum ApprovalSourceType {
+  AI_REPLY_DRAFT
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+/// One AI invocation and its outcome. The full conversation content used to
+/// build the prompt lives only in request memory — what is persisted is the
+/// validated structured OUTPUT (which erasure and retention redact via
+/// redactedAt) plus a PII-reduced input descriptor: counts and flags, never
+/// message bodies or names.
+model AIAction {
+  id                      String         @id @default(cuid())
+  organisationId          String
+  conversationId          String?
+  customerId              String?
+  requestedByMembershipId String?
+  provider                String
+  model                   String
+  taskType                AITaskType
+  promptVersion           String
+  status                  AIActionStatus @default(PENDING)
+  confidence              Float?
+  riskLevel               AIRiskLevel?
+  inputSummary            Json?
+  outputJson              Json?
+  usageJson               Json?
+  providerRequestId       String?
+  errorCode               String?
+  /// Set when outputJson/inputSummary were redacted by erasure or retention.
+  redactedAt              DateTime?
+  createdAt               DateTime       @default(now())
+  completedAt             DateTime?
+
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customer     Customer?     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  requestedBy  Membership?   @relation("AIActionRequester", fields: [requestedByMembershipId], references: [id], onDelete: SetNull)
+
+  @@index([organisationId, conversationId, createdAt])
+  @@index([organisationId, createdAt])
+  @@index([organisationId, redactedAt, createdAt])
+}
+
+/// One human decision gate. Slice 4 uses it for AI reply drafts; later
+/// slices reuse the same model for business actions. Approval here means
+/// "may be recorded as a manual Operanto message" — never an external send.
+model ApprovalRequest {
+  id                           String             @id @default(cuid())
+  organisationId               String
+  conversationId               String?
+  sourceType                   ApprovalSourceType
+  /// Id of the source record (the AIAction for AI_REPLY_DRAFT).
+  sourceId                     String
+  actionType                   String
+  status                       ApprovalStatus     @default(PENDING)
+  requestedByMembershipId      String?
+  assignedReviewerMembershipId String?
+  decidedByMembershipId        String?
+  /// Draft content as produced (and as edited). Customer-derived text lives
+  /// here and NOWHERE in audit metadata; erasure/retention redact via
+  /// redactedAt.
+  originalPayload              Json
+  editedPayload                Json?
+  decisionReason               String?
+  /// Confidence/risk snapshot, so decision policy is enforced server-side
+  /// against what was reviewed, not against a mutable source record.
+  riskLevel                    AIRiskLevel
+  lowConfidence                Boolean            @default(false)
+  idempotencyKey               String
+  requestedAt                  DateTime           @default(now())
+  decidedAt                    DateTime?
+  expiresAt                    DateTime?
+  executionClaimedAt           DateTime?
+  redactedAt                   DateTime?
+
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  requestedBy  Membership?   @relation("ApprovalRequester", fields: [requestedByMembershipId], references: [id], onDelete: SetNull)
+  assignedReviewer Membership? @relation("ApprovalReviewer", fields: [assignedReviewerMembershipId], references: [id], onDelete: SetNull)
+  decidedBy    Membership?   @relation("ApprovalDecider", fields: [decidedByMembershipId], references: [id], onDelete: SetNull)
+
+  @@unique([organisationId, idempotencyKey])
+  @@unique([organisationId, sourceType, sourceId])
+  @@index([organisationId, status, requestedAt])
+  @@index([conversationId])
+}
+
+/// Per-organisation AI configuration and usage accounting. AI is DISABLED by
+/// default and mock-mode by default — live provider calls require both the
+/// enabled flag and an explicit LIVE mode, set by an administrator and
+/// audited. Budget counters are enforced with atomic conditional updates.
+model AiConfiguration {
+  id                       String       @id @default(cuid())
+  organisationId           String       @unique
+  enabled                  Boolean      @default(false)
+  mode                     AIMode       @default(MOCK)
+  provider                 String       @default("openai")
+  /// Default documented in docs/operanto-ai-handover.md; replaceable per
+  /// tenant and via OPERANTO_AI_DEFAULT_MODEL. Never hard-coded in services.
+  model                    String       @default("gpt-4o-mini")
+  monthlyRequestLimit      Int          @default(200)
+  monthlyTokenLimit        Int?
+  monthlyCostLimitCents    Int?
+  periodStart              DateTime     @default(now())
+  periodRequestCount       Int          @default(0)
+  periodTokenCount         Int          @default(0)
+  periodEstimatedCostCents Int          @default(0)
+  permittedTaskTypes       AITaskType[] @default([SUMMARY, CLASSIFICATION, REPLY_DRAFT, NEXT_ACTION])
+  confidencePolicyVersion  String       @default("v1")
+  /// Audit-only scalar (who last changed configuration); the full change is
+  /// in AuditEvent.
+  updatedByMembershipId    String?
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
 }
 
 model AuditEvent {

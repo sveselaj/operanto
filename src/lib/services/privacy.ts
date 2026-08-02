@@ -42,6 +42,7 @@ export type ErasureResult = {
   conversations: number;
   messages: number;
   channelIdentities: number;
+  aiActions: number;
 };
 
 /**
@@ -171,6 +172,39 @@ export async function eraseCustomer(
         where: { ...scope(ctx), customerId: customer.id },
       });
 
+      // AI surfaces: outputs and draft payloads are derived from the
+      // customer's words, so they go the same way as the messages they came
+      // from. The action's operational shell (task type, provider, model,
+      // confidence, status, timestamps) survives — the person cannot be
+      // reconstructed from it.
+      const aiActions = await tx.aIAction.updateMany({
+        where: {
+          ...scope(ctx),
+          OR: [
+            { customerId: customer.id },
+            ...(conversationIds.length > 0
+              ? [{ conversationId: { in: conversationIds } }]
+              : []),
+          ],
+        },
+        data: {
+          outputJson: { redacted: true },
+          inputSummary: Prisma.DbNull,
+          redactedAt: new Date(),
+        },
+      });
+      if (conversationIds.length > 0) {
+        await tx.approvalRequest.updateMany({
+          where: { ...scope(ctx), conversationId: { in: conversationIds } },
+          data: {
+            originalPayload: { redacted: true },
+            editedPayload: Prisma.DbNull,
+            decisionReason: null,
+            redactedAt: new Date(),
+          },
+        });
+      }
+
       // 6. The source lead id is a foreign key straight back to the person in
       //    Pronatona. Clearing the payload copy while leaving it on the
       //    projection would defeat the whole exercise — and it would also let
@@ -259,6 +293,7 @@ export async function eraseCustomer(
         conversations: conversationIds.length,
         messages,
         channelIdentities: identities.count,
+        aiActions: aiActions.count,
       };
     },
     { timeout: 30_000, maxWait: 10_000 },
@@ -278,6 +313,7 @@ export async function eraseCustomer(
       conversationsRedacted: result.conversations,
       messagesRedacted: result.messages,
       channelIdentitiesDeleted: result.channelIdentities,
+      aiActionsRedacted: result.aiActions,
     },
   });
 
@@ -363,38 +399,40 @@ export async function redactExpiredPayloads(limit = 500): Promise<{
 const RETENTION_EXPIRED_TEXT = "[expired]";
 
 /**
- * Retention sweep for conversation message bodies. The window is configurable
- * per organisation (`Organisation.messageRetentionDays`), defaulting to the
- * provisional 12 months; erasure requests do not wait for it — they redact
- * immediately via eraseCustomer. Bodies are replaced in place and the row
- * survives, so the conversation's shape (who wrote when, over which channel)
- * remains intact for operations and audit.
+ * Retention sweep for conversation message bodies AND AI-derived content.
+ * AI outputs and draft payloads never outlive the messages they were built
+ * from, so the same per-organisation window governs both. Restriction holds
+ * a customer's rows untouched (Art. 18 pauses disposal); erasure never waits
+ * for this sweep.
  */
 export async function redactExpiredMessages(): Promise<{
   organisations: number;
   redacted: number;
+  aiRedacted: number;
 }> {
   const organisations = await prisma.organisation.findMany({
     select: { id: true, messageRetentionDays: true },
   });
 
   let redacted = 0;
+  let aiRedacted = 0;
   for (const organisation of organisations) {
     const retentionDays = messageRetentionDays(organisation.messageRetentionDays);
     const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+    // Restriction of processing (Art. 18) pauses DISPOSAL as much as use:
+    // a restricted customer may need the data preserved while a dispute
+    // runs, so their rows are held untouched until the restriction lifts.
+    // Erasure, by contrast, never waits — it redacts immediately through
+    // eraseCustomer regardless of age.
+    const notRestricted = {
+      OR: [{ customerId: null }, { customer: { restrictedAt: null } }],
+    };
     const result = await prisma.message.updateMany({
       where: {
         organisationId: organisation.id,
         redactedAt: null,
         createdAt: { lt: cutoff },
-        // Restriction of processing (Art. 18) pauses DISPOSAL as much as use:
-        // a restricted customer may need the data preserved while a dispute
-        // runs, so their conversations are held untouched until the
-        // restriction lifts. Erasure, by contrast, never waits — it redacts
-        // immediately through eraseCustomer regardless of age.
-        conversation: {
-          OR: [{ customerId: null }, { customer: { restrictedAt: null } }],
-        },
+        conversation: notRestricted,
       },
       data: {
         body: RETENTION_EXPIRED_TEXT,
@@ -403,7 +441,36 @@ export async function redactExpiredMessages(): Promise<{
       },
     });
     redacted += result.count;
+
+    const aiResult = await prisma.aIAction.updateMany({
+      where: {
+        organisationId: organisation.id,
+        redactedAt: null,
+        createdAt: { lt: cutoff },
+        ...notRestricted,
+      },
+      data: {
+        outputJson: { expired: true },
+        inputSummary: Prisma.DbNull,
+        redactedAt: new Date(),
+      },
+    });
+    const approvalResult = await prisma.approvalRequest.updateMany({
+      where: {
+        organisationId: organisation.id,
+        redactedAt: null,
+        requestedAt: { lt: cutoff },
+        conversation: notRestricted,
+      },
+      data: {
+        originalPayload: { expired: true },
+        editedPayload: Prisma.DbNull,
+        decisionReason: null,
+        redactedAt: new Date(),
+      },
+    });
+    aiRedacted += aiResult.count + approvalResult.count;
   }
 
-  return { organisations: organisations.length, redacted };
+  return { organisations: organisations.length, redacted, aiRedacted };
 }

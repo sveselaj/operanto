@@ -34,7 +34,17 @@ export type Permission =
    *  exposes, so it is held to the supervisor tier. */
   | "conversations:link_customer"
   | "conversations:note"
-  | "conversations:message";
+  | "conversations:message"
+  /** Explicit human control of a conversation's handling state. */
+  | "conversations:takeover"
+  /** Request AI assistance (summary, classification, drafts). */
+  | "ai:run"
+  /** Read AI results and configuration state. */
+  | "ai:read"
+  /** Change tenant AI configuration (enable, mode, model, budgets). */
+  | "ai:configure"
+  | "approvals:read"
+  | "approvals:decide";
 
 const MATRIX: Record<MembershipRole, Permission[]> = {
   ADMIN: [
@@ -61,6 +71,12 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "conversations:link_customer",
     "conversations:note",
     "conversations:message",
+    "conversations:takeover",
+    "ai:run",
+    "ai:read",
+    "ai:configure",
+    "approvals:read",
+    "approvals:decide",
   ],
   SUPERVISOR: [
     "customers:view_all",
@@ -81,6 +97,11 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "conversations:link_customer",
     "conversations:note",
     "conversations:message",
+    "conversations:takeover",
+    "ai:run",
+    "ai:read",
+    "approvals:read",
+    "approvals:decide",
   ],
   OPERATOR: [
     "customers:view_assigned",
@@ -93,6 +114,9 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "conversations:update",
     "conversations:note",
     "conversations:message",
+    "conversations:takeover",
+    "ai:run",
+    "ai:read",
   ],
 };
 
