@@ -5,6 +5,7 @@ import { can, requirePermission } from "@/lib/rbac";
 import { scope, type OrgContext } from "@/lib/org-context";
 import { audit } from "@/lib/audit";
 import { opportunityAccessWhere } from "@/lib/services/opportunities";
+import { conversationAccessWhere } from "@/lib/services/conversations";
 
 export function taskAccessWhere(ctx: OrgContext): Prisma.TaskWhereInput {
   if (can(ctx.membership.role, "opportunities:view_all")) return scope(ctx);
@@ -14,6 +15,7 @@ export function taskAccessWhere(ctx: OrgContext): Prisma.TaskWhereInput {
       { assignedMembershipId: ctx.membership.id },
       { createdByMembershipId: ctx.membership.id },
       { opportunity: { assignedMembershipId: ctx.membership.id } },
+      { conversation: { assignedMembershipId: ctx.membership.id } },
     ],
   };
 }
@@ -46,6 +48,13 @@ export async function listTasks(ctx: OrgContext, filter: TaskFilter = {}) {
           customer: { select: { id: true, name: true } },
         },
       },
+      conversation: {
+        select: {
+          id: true,
+          subject: true,
+          customer: { select: { id: true, name: true } },
+        },
+      },
     },
     orderBy: [{ status: "asc" }, { dueAt: "asc" }, { createdAt: "desc" }],
     take: 200,
@@ -58,6 +67,7 @@ export async function createTask(
     title: string;
     description?: string;
     opportunityId?: string;
+    conversationId?: string;
     assignedMembershipId?: string;
     priority?: TaskPriority;
     dueAt?: Date;
@@ -74,6 +84,21 @@ export async function createTask(
     });
     if (!opportunity) throw new Error("Opportunity not found");
   }
+  let conversationCustomerId: string | null = null;
+  if (input.conversationId) {
+    const conversation = await prisma.conversation.findFirst({
+      where: { ...conversationAccessWhere(ctx), id: input.conversationId },
+      select: { id: true, customer: { select: { id: true, restrictedAt: true } } },
+    });
+    if (!conversation) throw new Error("Conversation not found");
+    if (conversation.customer?.restrictedAt) {
+      // Restriction of processing halts new follow-up work, not just messages.
+      throw new Error(
+        "Processing for this customer is restricted (GDPR Art. 18) — no new follow-up work may be created",
+      );
+    }
+    conversationCustomerId = conversation.customer?.id ?? null;
+  }
   if (input.assignedMembershipId) {
     const member = await prisma.membership.findFirst({
       where: { id: input.assignedMembershipId, ...scope(ctx), status: "ACTIVE" },
@@ -85,6 +110,7 @@ export async function createTask(
     data: {
       organisationId: ctx.organisation.id,
       opportunityId: input.opportunityId ?? null,
+      conversationId: input.conversationId ?? null,
       assignedMembershipId: input.assignedMembershipId ?? null,
       createdByMembershipId: ctx.membership.id,
       title,
@@ -93,11 +119,13 @@ export async function createTask(
       dueAt: input.dueAt ?? null,
     },
   });
-  if (input.opportunityId) {
+  if (input.opportunityId || input.conversationId) {
     await prisma.activity.create({
       data: {
         organisationId: ctx.organisation.id,
-        opportunityId: input.opportunityId,
+        opportunityId: input.opportunityId ?? null,
+        conversationId: input.conversationId ?? null,
+        customerId: conversationCustomerId,
         actorType: "STAFF",
         actorUserId: ctx.user.id,
         actorMembershipId: ctx.membership.id,
@@ -107,11 +135,18 @@ export async function createTask(
       },
     });
   }
+  // Ids only: task titles are free text that staff fill with personal data
+  // (erasure redacts them for exactly that reason), and audit rows outlive
+  // both retention and erasure.
   await audit(ctx, {
     eventType: "task.created",
     targetType: "Task",
     targetId: task.id,
-    after: { title },
+    after: {
+      opportunityId: input.opportunityId ?? null,
+      conversationId: input.conversationId ?? null,
+      assignedMembershipId: input.assignedMembershipId ?? null,
+    },
   });
   return task;
 }
@@ -124,6 +159,7 @@ export async function setTaskStatus(
   requirePermission(ctx.membership.role, "tasks:manage");
   const existing = await prisma.task.findFirst({
     where: { ...taskAccessWhere(ctx), id },
+    include: { conversation: { select: { customerId: true } } },
   });
   if (!existing) throw new Error("Task not found");
   if (existing.status === status) return existing;
@@ -135,11 +171,13 @@ export async function setTaskStatus(
       completedAt: status === "COMPLETED" ? new Date() : null,
     },
   });
-  if (existing.opportunityId) {
+  if (existing.opportunityId || existing.conversationId) {
     await prisma.activity.create({
       data: {
         organisationId: ctx.organisation.id,
         opportunityId: existing.opportunityId,
+        conversationId: existing.conversationId,
+        customerId: existing.conversation?.customerId ?? null,
         actorType: "STAFF",
         actorUserId: ctx.user.id,
         actorMembershipId: ctx.membership.id,

@@ -151,6 +151,12 @@ export async function eraseCustomer(
           where: { ...scope(ctx), conversationId: { in: conversationIds } },
           data: { summary: ERASED_TEXT, metadata: Prisma.DbNull },
         });
+        // Tasks raised from these conversations get the same title treatment
+        // as opportunity tasks: staff type free text there.
+        await tx.task.updateMany({
+          where: { ...scope(ctx), conversationId: { in: conversationIds } },
+          data: { title: ERASED_TEXT, description: null },
+        });
       }
       // Participant rows referencing this customer can also carry a display
       // name or a channel handle from before the record was linked.

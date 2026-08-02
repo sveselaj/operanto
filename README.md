@@ -63,6 +63,7 @@ Checks: `pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm build`.
 - [docs/architecture.md](docs/architecture.md) — components, event pipeline, tenancy model
 - [docs/operanto-conversations-foundation.md](docs/operanto-conversations-foundation.md) — conversations model, permissions, simulator, privacy behaviour
 - [docs/operanto-customer-context.md](docs/operanto-customer-context.md) — channel identities and the customer-context panel
+- [docs/operanto-conversation-workflows.md](docs/operanto-conversation-workflows.md) — tasks raised from conversations
 - [docs/operanto-product-architecture.md](docs/operanto-product-architecture.md) — one external brand, public capability model, naming rules
 - [docs/operanto-capability-gap-analysis.md](docs/operanto-capability-gap-analysis.md) — capability matrix across main, prototypes, and specs
 - [docs/operanto-target-architecture.md](docs/operanto-target-architecture.md) — bounded capabilities and consolidation rules

@@ -71,7 +71,10 @@ export async function getCustomerContext(
         where: {
           ...taskAccessWhere(ctx),
           status: "OPEN",
-          opportunity: { customerId: customer.id },
+          OR: [
+            { opportunity: { customerId: customer.id } },
+            { conversation: { customerId: customer.id } },
+          ],
         },
         select: { id: true, title: true, dueAt: true, priority: true },
         orderBy: [{ dueAt: "asc" }],

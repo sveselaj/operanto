@@ -102,7 +102,7 @@ test.describe.serial("conversations foundation", () => {
     ).toBeVisible();
 
     // Assign to the first active member.
-    await page.getByLabel("Assignee").selectOption({ index: 1 });
+    await page.getByLabel("Assignee", { exact: true }).selectOption({ index: 1 });
     await page.getByRole("button", { name: "Assign" }).click();
     await expect(page.getByText("Conversation reassigned").first()).toBeVisible();
 
@@ -117,6 +117,27 @@ test.describe.serial("conversations foundation", () => {
     await page.getByLabel("Status").selectOption("PENDING");
     await page.getByRole("button", { name: "Set status" }).click();
     await expect(page.getByLabel("Status")).toHaveValue("PENDING");
+
+    // Slice 3: the request becomes trackable work without losing context.
+    const taskTitle = `Confirm shipment with courier ${run}`;
+    await page.getByLabel("Task title").fill(taskTitle);
+    await page.getByRole("button", { name: "Create task" }).click();
+    await expect(page.getByText(taskTitle).first()).toBeVisible();
+    await expect(
+      page.getByText(`Task created: ${taskTitle}`).first(),
+    ).toBeVisible();
+
+    const taskRow = page
+      .locator("div.flex.items-start", { hasText: taskTitle })
+      .first();
+    await taskRow.getByRole("button", { name: "Complete task" }).click();
+    await expect(page.getByText(`Completed: ${taskTitle}`).first()).toBeVisible();
+
+    // And the linked task is reachable from the Tasks list.
+    await page.goto("/tasks?filter=completed");
+    await expect(page.getByText(taskTitle).first()).toBeVisible();
+
+    await page.goto(`/conversations/${conversationId}`);
     await screenshot(page, "conversation-detail");
 
     // And it appears under the matching list filter.
@@ -156,7 +177,7 @@ test.describe.serial("conversations foundation", () => {
     await expect(page.getByRole("link", { name: buyerName })).toBeVisible();
 
     // Assign, prioritise, and capture the requirement as a note.
-    await page.getByLabel("Assignee").selectOption({ index: 1 });
+    await page.getByLabel("Assignee", { exact: true }).selectOption({ index: 1 });
     await page.getByRole("button", { name: "Assign" }).click();
     await expect(page.getByText("Conversation reassigned").first()).toBeVisible();
 

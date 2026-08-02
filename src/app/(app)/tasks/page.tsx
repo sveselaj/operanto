@@ -121,6 +121,19 @@ export default async function TasksPage({ searchParams }: PageProps<"/tasks">) {
                       {" · "}
                     </>
                   ) : null}
+                  {task.conversation ? (
+                    <>
+                      <Link
+                        href={`/conversations/${task.conversation.id}`}
+                        className="text-primary hover:underline"
+                      >
+                        {task.conversation.subject ??
+                          task.conversation.customer?.name ??
+                          "Conversation"}
+                      </Link>
+                      {" · "}
+                    </>
+                  ) : null}
                   {task.assignee?.user.name ?? "Unassigned"} · {task.priority}
                 </p>
               </div>
