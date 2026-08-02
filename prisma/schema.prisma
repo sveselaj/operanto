@@ -508,10 +508,14 @@ enum MessageSenderType {
   SYSTEM
 }
 
-/// Delivery lifecycle foundation. Slice 1 (manual + simulator channels) only
-/// ever writes RECORDED — nothing is transmitted anywhere. The remaining
-/// values are the contract live channel adapters will drive in a later slice;
-/// they are declared now so that migration is additive, not corrective.
+/// Delivery lifecycle foundation. RECORDED is the explicit LOCAL/UNSENT
+/// state: the message exists only inside Operanto and nothing has been
+/// transmitted anywhere — including messages created by approving an AI
+/// draft. INVARIANT for future channel workers: a RECORDED message must
+/// NEVER be sent automatically; sending is a separate, explicit operation
+/// that re-checks permission, conversation access, restriction, consent,
+/// messaging window, template requirements, provider connection,
+/// idempotency, and the current approval state (Slice 5).
 enum MessageDeliveryStatus {
   RECORDED
   QUEUED

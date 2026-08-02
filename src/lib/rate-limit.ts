@@ -71,18 +71,75 @@ type Options = {
  *
  * Repeated e2e runs share the Upstash account bucket with staging, forcing
  * cooldown waits between suites. A per-run namespace prefix isolates test
- * counters WITHOUT weakening any limit: every limit still applies inside the
- * namespace; there is no bypass, only a separate bucket.
+ * counters WITHOUT weakening any limit: every limit still applies, on every
+ * existing dimension (account, IP), inside the namespace — there is no
+ * bypass, only a separate bucket.
  *
- * Hard guard: the namespace is read ONLY when NODE_ENV !== "production".
- * A production deployment ignores the variable entirely, so no header, env
- * echo, or configuration mistake can move production traffic off the shared
- * counters. Verified by unit test.
+ * Environment policy (server-controlled; nothing here ever reads a request):
+ * the namespace is honoured ONLY in explicitly trusted environments —
+ * test, CI, preview, and explicitly configured staging/development.
+ * `VERCEL_ENV=production` refuses it absolutely, overriding any application
+ * setting; an unrecognised or unset environment resolves to "production" and
+ * therefore also refuses (fail closed: the namespace is ignored, keys and
+ * limits stay exactly as production expects). Verified by unit tests.
  */
+
+export type DeploymentEnvironment =
+  | "production"
+  | "staging"
+  | "preview"
+  | "ci"
+  | "test"
+  | "development";
+
+const NAMESPACE_TRUSTED: ReadonlySet<DeploymentEnvironment> = new Set([
+  "test",
+  "ci",
+  "preview",
+  "staging",
+  "development",
+]);
+
+/**
+ * Canonical deployment environment. Resolution order:
+ * 1. `VERCEL_ENV=production` → production, absolutely and unconditionally.
+ * 2. `OPERANTO_ENV` (explicit, server-only) when it names a known value.
+ * 3. `VERCEL_ENV=preview` → preview.
+ * 4. CI → ci.  5. NODE_ENV test/development accordingly.
+ * 6. Anything else → production (fail closed).
+ */
+export function deploymentEnvironment(): DeploymentEnvironment {
+  if (process.env.VERCEL_ENV === "production") return "production";
+  const app = process.env.OPERANTO_ENV;
+  if (
+    app === "production" ||
+    app === "staging" ||
+    app === "preview" ||
+    app === "ci" ||
+    app === "test" ||
+    app === "development"
+  ) {
+    return app;
+  }
+  if (process.env.VERCEL_ENV === "preview") return "preview";
+  if (process.env.CI === "true" || process.env.CI === "1") return "ci";
+  if (process.env.NODE_ENV === "test") return "test";
+  if (process.env.NODE_ENV === "development") return "development";
+  return "production";
+}
+
 export function namespacedKey(key: string): string {
-  if (process.env.NODE_ENV === "production") return key;
   const ns = process.env.OPERANTO_RATE_LIMIT_TEST_NAMESPACE;
   if (!ns) return key;
+  const environment = deploymentEnvironment();
+  if (!NAMESPACE_TRUSTED.has(environment)) {
+    // Fail closed: a namespace configured in production is refused — keys
+    // and limits remain the ordinary shared production counters.
+    console.error(
+      "[rate-limit] test namespace configured but refused in this environment",
+    );
+    return key;
+  }
   return `testns:${ns.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 48)}:${key}`;
 }
 

@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "export OPERANTO_RATE_LIMIT_TEST_NAMESPACE=e2e-$(date +%s) && NEXT_PUBLIC_SITE_URL=http://localhost:3000 NEXT_PUBLIC_APP_URL=http://localhost:3000 NEXT_PUBLIC_API_URL=http://127.0.0.1:3000 AUTH_URL=http://localhost:3000 next build && PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:3000 playwright test",
+    "test:e2e": "export OPERANTO_ENV=test OPERANTO_RATE_LIMIT_TEST_NAMESPACE=e2e-$(date +%s) && NEXT_PUBLIC_SITE_URL=http://localhost:3000 NEXT_PUBLIC_APP_URL=http://localhost:3000 NEXT_PUBLIC_API_URL=http://127.0.0.1:3000 AUTH_URL=http://localhost:3000 next build && PLAYWRIGHT_API_BASE_URL=http://127.0.0.1:3000 playwright test",
     "postinstall": "prisma generate",
     "db:up": "docker compose up -d",
     "db:migrate": "prisma migrate dev",

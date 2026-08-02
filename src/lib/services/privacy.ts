@@ -465,6 +465,7 @@ export async function redactExpiredMessages(): Promise<{
       data: {
         originalPayload: { expired: true },
         editedPayload: Prisma.DbNull,
+        decisionReason: null,
         redactedAt: new Date(),
       },
     });

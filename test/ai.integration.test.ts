@@ -243,6 +243,36 @@ describeDb("draft review and approval", () => {
     expect(action!.status).toBe("APPROVED");
   });
 
+  it("approving and applying a draft performs NO external transmission of any kind", async () => {
+    const ctx = await makeCtx("org-a");
+    await enableAi(ctx);
+    const { conversation } = await conversationWithInbound(ctx);
+    await runAiTask(ctx, conversation.id, "REPLY_DRAFT");
+    const approval = (await getConversationApproval(ctx, conversation.id))!;
+
+    // Any network attempt during decision or application is a failure: the
+    // stub throws, so an outbound call would break the flow loudly.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => {
+      throw new Error("EXTERNAL TRANSMISSION ATTEMPTED");
+    }) as typeof fetch;
+    try {
+      await decideApproval(ctx, approval.id, "APPROVED");
+      await applyApprovedDraft(ctx, approval.id);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    // The result is a LOCAL message: explicit unsent state, no provider ids,
+    // and no queue-like artefact anywhere in the schema.
+    const message = await db.message.findFirst({
+      where: { conversationId: conversation.id, direction: "OUTBOUND" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(message!.deliveryStatus).toBe("RECORDED");
+    expect(message!.providerMessageId).toBeNull();
+  });
+
   it("rejection is atomic and cannot be re-decided", async () => {
     const ctx = await makeCtx("org-a");
     await enableAi(ctx);

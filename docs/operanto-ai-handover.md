@@ -133,11 +133,65 @@ The model cannot call tools, integrations, or the database.
 ## E2E rate-limit isolation
 
 `namespacedKey` in `src/lib/rate-limit.ts` prefixes limiter keys with
-`OPERANTO_RATE_LIMIT_TEST_NAMESPACE` **only when `NODE_ENV !== "production"`**.
-`pnpm test:e2e` sets a per-run value, so suites no longer share buckets with
-staging or each other — no cooldown waits. No limit is weakened: every limit
-applies unchanged inside the namespace, production ignores the variable
-entirely (unit-tested), and there is no header or client-controlled path.
+`OPERANTO_RATE_LIMIT_TEST_NAMESPACE`, honoured ONLY in explicitly trusted
+deployment environments. The canonical environment comes from
+`deploymentEnvironment()`:
+
+| Resolution order | Result |
+|---|---|
+| `VERCEL_ENV=production` | **production — absolute, overrides everything** |
+| `OPERANTO_ENV` (server-only, explicit) | its value |
+| `VERCEL_ENV=preview` | preview |
+| `CI` truthy | ci |
+| `NODE_ENV` test / development | test / development |
+| anything else | **production (fail closed)** |
+
+Allowed for the namespace: `test`, `ci`, `preview`, explicitly configured
+`staging`, and local `development`. `production` — and any unknown or unset
+environment — refuses it: the variable is ignored with an operational error
+log, keys stay byte-identical to normal production keys, and all limits are
+unchanged. The namespace is read exclusively from `process.env` — the rate
+limiter never sees a request, so no header, query, cookie, or form value can
+influence it (unit-tested, including a hostile key that imitates a
+namespaced key). Each `pnpm test:e2e` run exports a unique per-run value and
+`OPERANTO_ENV=test`; the account/IP dimensions always remain inside the
+namespaced key.
+
+## Approval vs. sending — the invariant
+
+Approving a draft creates a manual `Message` with `deliveryStatus: RECORDED`
+— the explicit LOCAL/UNSENT state. Nothing is transmitted (integration-
+tested: any network attempt during approve/apply fails the test loudly, and
+the resulting row has no provider id). **Future channel workers must never
+send RECORDED messages automatically.** Sending arrives in Slice 5 as a
+separate explicit operation that re-checks permission, conversation access,
+customer restriction, consent, messaging window, template requirements,
+provider connection, idempotency, and the current approval state.
+
+## Content-persistence inventory
+
+Every location where AI-generated or human-edited content rests, and its
+lifecycle coverage (R = restriction holds it, E = erasure redacts it,
+T = retention sweeps it on the per-org message window):
+
+| Location | Content | R | E | T |
+|---|---|---|---|---|
+| `AIAction.outputJson` | task output incl. draft text | ✓ | ✓ | ✓ |
+| `AIAction.inputSummary` | counts/flags only (no content) | ✓ | ✓ | ✓ |
+| `ApprovalRequest.originalPayload` | draft as generated | ✓ | ✓ | ✓ |
+| `ApprovalRequest.editedPayload` | draft as edited | ✓ | ✓ | ✓ |
+| `ApprovalRequest.decisionReason` | reviewer free text | ✓ | ✓ | ✓ |
+| `Message.body` (applied draft) | final text | ✓ | ✓ | ✓ |
+
+NOT content-bearing, by construction and by test: `AuditEvent` metadata,
+`Activity` summaries for AI events (fixed generic strings), normalized
+provider errors, and `usageJson` (numbers only). No raw prompt or complete
+context bundle is ever persisted — prompt context exists only in request
+memory. The AIAction/ApprovalRequest duplication (original vs. edited draft)
+is deliberate provenance for review, and both copies share the same erasure
+and retention treatment; because a draft is always created after its source
+message, the shared sweep window means AI content can lag a redacted
+conversation by at most one 5-minute cron cycle, never persist beyond it.
 
 ## Production enablement procedure
 
