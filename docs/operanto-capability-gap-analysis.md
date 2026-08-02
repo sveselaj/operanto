@@ -124,7 +124,7 @@ ordering in §7.
 | Capability | Source | Status | Notes |
 |---|---|---|---|
 | Tenancy: Organisation / Membership / 3-role RBAC / invitations / 2FA / session revocation | `main` | Implemented (production-hardened) | Canonical. Prototype `Workspace`/`WorkspaceMember`/6-role matrix is **Obsolete** — every ported service must be rewritten onto `OrgContext` + `requirePermission`. Role-model expansion is an open question (§6). |
-| Customer model + exact-match identity ladder + erasure tombstones | `main` | Implemented | Canonical (`src/lib/events/matching.ts`, 10 unit tests). Prototype matchers are **Obsolete**. Gap: no `CustomerIdentity` table for channel handles — additive extension needed (Slice 2). |
+| Customer model + exact-match identity ladder + erasure tombstones | `main` | Implemented | Canonical (`src/lib/events/matching.ts`, 10 unit tests). Prototype matchers are **Obsolete**. `CustomerIdentity` channel-handle rung delivered in Slice 2 (taught by linking, deleted on erasure). |
 | Privacy lifecycle (erasure across surfaces, restriction, payload retention) | `main` | Implemented | Every new model (Conversation, Message, attachments, AIAction) must join `eraseCustomer` and retention. `msync` `Workspace.dataRetentionDays` is a dead flag — **Obsolete**. |
 | Signed domain-event ingestion (store → atomic claim → retry → dead-letter) | `main` | Implemented | The architectural template for channel webhook processing (replaces prototype's synchronous inline model). |
 | Rate limiting (Upstash, fail-closed), encryption (AES-256-GCM under `OPERANTO_ENCRYPTION_KEY`), observability (Sentry + scrubbing) | `main` | Implemented | Canonical. `msync` in-process Map limiter and `mediasync/crypto.ts` (falls back to `AUTH_SECRET` — rotation bricks credentials) are **Obsolete**. |
@@ -189,7 +189,7 @@ and `docs/operanto-target-architecture.md` reflect these decisions.
 |---|---|---|---|
 | 0 | `audit/operanto-capability-gap` | This audit + target architecture. Docs only. | — |
 | 1 ✅ | `feature/operanto-conversations-foundation` (delivered 2026-08-01) | Conversation/Message/ConversationNote/ChannelConnection models (additive migration), `conversations:*` permissions, erasure extension, manual entry + simulator channel, list/detail UI, assignment/status/notes, audit + Activity events, unit + integration + e2e tests. | 0 |
-| 2 | `feature/operanto-customer-context` | `CustomerIdentity` (channel handles as a new ladder rung), contextual sidebar (timeline, opportunities, tasks, prior conversations), matching tests. | 1 |
+| 2 ✅ | `feature/operanto-customer-context` (delivered 2026-08-02) | `CustomerIdentity` (channel handles as a new ladder rung, taught by linking), contextual sidebar (timeline, opportunities, tasks, prior conversations), matching tests. See `docs/operanto-customer-context.md`. | 1 |
 | 3 | `feature/operanto-conversation-workflows` | Task↔Conversation link (additive), create-task-from-conversation, task progress in timeline. | 1 |
 | 4 | `feature/operanto-ai-handover` | AI provider/service/AIAction port, summarize/classify/draft-reply with approval-gated composer, tool runtime + unified ApprovalRequest, takeover/handling, confidence policy, `ai:run`/`approvals:decide` permissions. Mock mode default. | 1–3 |
 | 5 | `feature/operanto-channel-adapters` | Channel adapter interface, WebhookEvent store + async processing on the InboundEvent pattern, consent + delivery status, WhatsApp Cloud API connector behind a feature flag (decisions 2–3), optional controlled web-chat channel. | 1, 4 (for AI-assisted replies) |

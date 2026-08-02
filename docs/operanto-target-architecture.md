@@ -71,7 +71,7 @@ AI-to-human handover.
 | Conceptual entity | Realisation |
 |---|---|
 | `Customer` | **Existing model, reused.** Never duplicated. |
-| `CustomerIdentity` | New table: `(organisationId, channelType, externalId, displayHandle, verifiedAt)` unique per org+channel+externalId. Becomes an additional exact-match rung in the identity ladder (after source id, before email). Erasure redacts it. |
+| `CustomerIdentity` | Delivered in Slice 2: `(organisationId, channelType, externalId, displayHandle, source)` unique per org+channel+externalId — the exact-match rung ahead of e-mail for channel ingestion. Taught by explicit linking, withdrawn on unlink, DELETED on erasure. `verifiedAt` deferred. |
 | `Conversation` | New: `organisationId, customerId?, channelConnectionId?, channelType, status (OPEN/PENDING/WAITING_CUSTOMER/RESOLVED/ARCHIVED), priority, handling (AI/HUMAN), assignedMembershipId?, subject?, summary?, intent?, sentiment?, lastMessageAt, lastInboundAt, lastOutboundAt, erasure/restriction fields`. Optional `opportunityId` link. |
 | `ConversationParticipant` | Deferred: 1:1 customer↔staff conversations first. Group participation modelled only when a channel demands it (email CC). |
 | `Message` | New: `direction (INBOUND/OUTBOUND), senderType (CUSTOMER/STAFF/AI/SYSTEM), senderMembershipId?, body, status (QUEUED/SENT/DELIVERED/READ/FAILED), statusUpdatedAt, errorMessage?, externalMessageId, templateId?`. **`@@unique([organisationId, channelConnectionId, externalMessageId])`** — dedupe by constraint, not read-then-write. |

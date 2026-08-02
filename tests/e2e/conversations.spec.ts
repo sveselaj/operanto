@@ -45,6 +45,19 @@ async function screenshot(page: Page, name: string) {
   await page.screenshot({ path: `${dir}/${name}.png`, fullPage: true });
 }
 
+/**
+ * A previous run on the same database may have taught the sender's channel
+ * identity, in which case the freshly ingested conversation arrives already
+ * linked. Unlink first so the manual-link path is exercised every run.
+ */
+async function ensureUnlinked(page: Page) {
+  const unlink = page.getByRole("button", { name: "Unlink customer" });
+  if (await unlink.isVisible().catch(() => false)) {
+    await unlink.click();
+    await page.getByText("Not linked to a customer record.").waitFor();
+  }
+}
+
 test.describe.serial("conversations foundation", () => {
   test("Nagelista flow: ingest, open, link, assign, note, status", async ({
     page,
@@ -78,6 +91,7 @@ test.describe.serial("conversations foundation", () => {
     await expect(
       page.getByText("Can you tell me whether it has been shipped?"),
     ).toBeVisible();
+    await ensureUnlinked(page);
     await expect(page.getByText("Not linked to a customer record.")).toBeVisible();
 
     // Link the customer.
@@ -136,6 +150,7 @@ test.describe.serial("conversations foundation", () => {
     ).toBeVisible();
 
     // Link the buyer created through the ingestion pipeline.
+    await ensureUnlinked(page);
     await page.getByLabel("Customer to link").selectOption({ label: buyerName });
     await page.getByRole("button", { name: "Link customer" }).click();
     await expect(page.getByRole("link", { name: buyerName })).toBeVisible();
@@ -176,5 +191,16 @@ test.describe.serial("conversations foundation", () => {
     ]) {
       await expect(page.getByText(eventType).first()).toBeVisible();
     }
+
+    // Slice 2: linking taught the sender's channel identity, so the NEXT
+    // inbound message from the same sender auto-links — and the context
+    // panel shows the prior conversation.
+    const followUpId = ingestScenario("pronatona", `${run}b`);
+    await page.goto(`/conversations/${followUpId}`);
+    await expect(page.getByRole("link", { name: buyerName })).toBeVisible();
+    await expect(page.getByText("Customer context")).toBeVisible();
+    await expect(page.getByText("Prior conversations")).toBeVisible();
+    await expect(page.getByText("Known channel identities")).toBeVisible();
+    await screenshot(page, "conversation-customer-context");
   });
 });

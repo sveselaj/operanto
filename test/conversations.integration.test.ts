@@ -40,6 +40,7 @@ const { ingestSimulatedMessage, SIMULATOR_SCENARIOS } = await import(
 const { eraseCustomer, redactExpiredMessages } = await import(
   "@/lib/services/privacy"
 );
+const { getCustomerContext } = await import("@/lib/services/customer-context");
 
 async function makeCtx(slug: string, role: "ADMIN" | "SUPERVISOR" | "OPERATOR" = "ADMIN") {
   const organisation =
@@ -342,6 +343,157 @@ describeDb("simulator ingestion", () => {
     const result = await ingestSimulatedMessage(ctxA.organisation.id, "nagelista");
     expect(await getConversation(ctxB, result.conversationId)).toBeNull();
     expect((await listConversations(ctxB)).conversations).toHaveLength(0);
+  });
+});
+
+describeDb("channel identities (Slice 2)", () => {
+  it("linking teaches the channel identity; the next inbound message auto-links", async () => {
+    const ctx = await makeCtx("org-a");
+    const customer = await makeCustomer(ctx.organisation.id, {
+      name: "Returning shopper",
+    });
+    const first = await ingestSimulatedMessage(ctx.organisation.id, "nagelista", {
+      runId: "teach-1",
+    });
+    expect(first.customerId).toBeNull();
+
+    await linkConversationCustomer(ctx, first.conversationId, customer.id);
+    const identities = await db.customerIdentity.findMany();
+    expect(identities).toHaveLength(1);
+    expect(identities[0]!.customerId).toBe(customer.id);
+    expect(identities[0]!.source).toBe("manual_link");
+
+    // The teaching itself is audited — ids and flags only, never the handle.
+    const linkAudit = await db.auditEvent.findFirst({
+      where: { eventType: "conversation.customer_linked" },
+    });
+    const meta = linkAudit!.afterMetadata as Record<string, unknown>;
+    expect(meta.identityRecorded).toBe(true);
+    expect(JSON.stringify(meta)).not.toContain(
+      SIMULATOR_SCENARIOS.nagelista.senderExternalRef,
+    );
+
+    const second = await ingestSimulatedMessage(ctx.organisation.id, "nagelista", {
+      runId: "teach-2",
+    });
+    expect(second.conversationId).not.toBe(first.conversationId);
+    expect(second.customerId).toBe(customer.id);
+  });
+
+  it("a taught identity outranks e-mail matching", async () => {
+    const ctx = await makeCtx("org-a");
+    const byEmail = await makeCustomer(ctx.organisation.id, {
+      name: "Email match",
+      email: SIMULATOR_SCENARIOS.nagelista.linkEmail,
+    });
+    const byIdentity = await makeCustomer(ctx.organisation.id, {
+      name: "Identity match",
+    });
+    await db.customerIdentity.create({
+      data: {
+        organisationId: ctx.organisation.id,
+        customerId: byIdentity.id,
+        channelType: "SIMULATOR",
+        externalId: SIMULATOR_SCENARIOS.nagelista.senderExternalRef,
+        source: "manual_link",
+      },
+    });
+    const result = await ingestSimulatedMessage(ctx.organisation.id, "nagelista");
+    expect(result.customerId).toBe(byIdentity.id);
+    expect(result.customerId).not.toBe(byEmail.id);
+  });
+
+  it("unlinking withdraws the identity claim", async () => {
+    const ctx = await makeCtx("org-a");
+    const customer = await makeCustomer(ctx.organisation.id, { name: "Mislinked" });
+    const first = await ingestSimulatedMessage(ctx.organisation.id, "pronatona", {
+      runId: "u-1",
+    });
+    await linkConversationCustomer(ctx, first.conversationId, customer.id);
+    await unlinkConversationCustomer(ctx, first.conversationId);
+    expect(await db.customerIdentity.count()).toBe(0);
+
+    const second = await ingestSimulatedMessage(ctx.organisation.id, "pronatona", {
+      runId: "u-2",
+    });
+    expect(second.customerId).toBeNull();
+  });
+
+  it("identities are tenant-scoped: another organisation never inherits them", async () => {
+    const ctxA = await makeCtx("org-a");
+    const ctxB = await makeCtx("org-b");
+    const customerA = await makeCustomer(ctxA.organisation.id, { name: "Org A person" });
+    const taught = await ingestSimulatedMessage(ctxA.organisation.id, "nagelista", {
+      runId: "x-1",
+    });
+    await linkConversationCustomer(ctxA, taught.conversationId, customerA.id);
+
+    const inB = await ingestSimulatedMessage(ctxB.organisation.id, "nagelista", {
+      runId: "x-1",
+    });
+    expect(inB.customerId).toBeNull();
+  });
+
+  it("erasure deletes identities and the tombstone is never re-linked", async () => {
+    const ctx = await makeCtx("org-a");
+    const customer = await makeCustomer(ctx.organisation.id, { name: "Leaving" });
+    const first = await ingestSimulatedMessage(ctx.organisation.id, "nagelista", {
+      runId: "e-1",
+    });
+    await linkConversationCustomer(ctx, first.conversationId, customer.id);
+    expect(await db.customerIdentity.count()).toBe(1);
+
+    const result = await eraseCustomer(ctx, customer.id, "Art. 17 request");
+    expect(result.channelIdentities).toBe(1);
+    expect(await db.customerIdentity.count()).toBe(0);
+
+    const after = await ingestSimulatedMessage(ctx.organisation.id, "nagelista", {
+      runId: "e-2",
+    });
+    expect(after.customerId).toBeNull();
+  });
+});
+
+describeDb("customer context (Slice 2)", () => {
+  it("assembles prior conversations scoped to the caller", async () => {
+    const admin = await makeCtx("org-a", "ADMIN");
+    const operator = await makeCtx("org-a", "OPERATOR");
+    const customer = await makeCustomer(admin.organisation.id, { name: "Known person" });
+
+    const mine = await createManualConversation(operator, {
+      customerId: customer.id,
+      subject: "Operator case",
+    });
+    const foreign = await createManualConversation(admin, {
+      customerId: customer.id,
+      subject: "Admin-only case",
+    });
+    const current = await createManualConversation(operator, {
+      customerId: customer.id,
+      subject: "Current case",
+    });
+
+    const adminContext = await getCustomerContext(admin, customer.id, {
+      excludeConversationId: current.id,
+    });
+    expect(adminContext!.priorConversations.map((c) => c.id).sort()).toEqual(
+      [mine.id, foreign.id].sort(),
+    );
+    expect(adminContext!.activities.length).toBeGreaterThan(0);
+
+    const operatorContext = await getCustomerContext(operator, customer.id, {
+      excludeConversationId: current.id,
+    });
+    expect(operatorContext!.priorConversations.map((c) => c.id)).toEqual([mine.id]);
+    // Operators lack activity:view_all — the org-wide timeline stays closed.
+    expect(operatorContext!.activities).toEqual([]);
+  });
+
+  it("never crosses tenants", async () => {
+    const ctxA = await makeCtx("org-a");
+    const ctxB = await makeCtx("org-b");
+    const customerA = await makeCustomer(ctxA.organisation.id, { name: "Org A person" });
+    expect(await getCustomerContext(ctxB, customerA.id)).toBeNull();
   });
 });
 

@@ -21,6 +21,7 @@ import {
   unlinkCustomerAction,
 } from "./actions";
 import { MessageComposer, NoteForm } from "./composer-forms";
+import { CustomerContextPanel } from "./customer-context-panel";
 
 export const metadata: Metadata = { title: "Conversation" };
 
@@ -232,6 +233,13 @@ export default async function ConversationDetailPage({
               </div>
             )}
           </section>
+
+          {customer && !customer.erasedAt ? (
+            <CustomerContextPanel
+              customerId={customer.id}
+              excludeConversationId={conversation.id}
+            />
+          ) : null}
 
           <section className="rounded-lg border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">Manage</h2>

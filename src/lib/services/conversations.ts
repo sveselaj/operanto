@@ -8,6 +8,10 @@ import { prisma } from "@/lib/prisma";
 import { can, requirePermission } from "@/lib/rbac";
 import { scope, type OrgContext } from "@/lib/org-context";
 import { audit } from "@/lib/audit";
+import {
+  recordCustomerIdentity,
+  removeCustomerIdentity,
+} from "@/lib/services/customer-identity";
 
 /**
  * Conversation reads/writes (Operanto Conversations, Slice 1).
@@ -592,14 +596,26 @@ export async function linkConversationCustomer(
   if (!existing) throw new Error("Conversation not found");
   if (existing.customerId === customerId) return;
 
-  await prisma.$transaction(async (tx) => {
+  const identityRecorded = await prisma.$transaction(async (tx) => {
     const customer = await findLinkableCustomer(ctx, tx, customerId);
+    // The channel reference of the counterpart, if the conversation has one —
+    // linking is the explicit staff decision that "this sender IS this
+    // customer", so it teaches the channel identity for future ingestion.
+    const counterpart = await tx.conversationParticipant.findFirst({
+      where: {
+        ...scope(ctx),
+        conversationId: existing.id,
+        type: "CUSTOMER",
+        customerId: null,
+      },
+    });
     await tx.conversation.update({
       where: { id: existing.id },
       data: { customerId: customer.id },
     });
     // The CUSTOMER participant row becomes the linked customer; its manual
-    // display name is superseded by the customer record.
+    // display name is superseded by the customer record, but the channel
+    // reference is preserved.
     await tx.conversationParticipant.deleteMany({
       where: {
         ...scope(ctx),
@@ -616,14 +632,27 @@ export async function linkConversationCustomer(
           customerId: customer.id,
         },
       },
-      update: {},
+      update: { externalRef: counterpart?.externalRef ?? undefined },
       create: {
         organisationId: ctx.organisation.id,
         conversationId: existing.id,
         type: "CUSTOMER",
         customerId: customer.id,
+        externalRef: counterpart?.externalRef ?? null,
       },
     });
+    let identityRecorded = false;
+    if (counterpart?.externalRef) {
+      await recordCustomerIdentity(tx, {
+        organisationId: ctx.organisation.id,
+        customerId: customer.id,
+        channelType: existing.channelType,
+        externalId: counterpart.externalRef,
+        displayHandle: counterpart.displayName,
+        source: "manual_link",
+      });
+      identityRecorded = true;
+    }
     await tx.activity.create({
       data: {
         organisationId: ctx.organisation.id,
@@ -633,10 +662,13 @@ export async function linkConversationCustomer(
         actorUserId: ctx.user.id,
         actorMembershipId: ctx.membership.id,
         activityType: "conversation.customer_linked",
-        summary: "Conversation linked to customer",
+        summary: identityRecorded
+          ? "Conversation linked to customer (channel identity recorded)"
+          : "Conversation linked to customer",
         metadata: { fromCustomerId: existing.customerId, toCustomerId: customer.id },
       },
     });
+    return identityRecorded;
   });
 
   await audit(ctx, {
@@ -644,7 +676,11 @@ export async function linkConversationCustomer(
     targetType: "Conversation",
     targetId: existing.id,
     before: { customerId: existing.customerId },
-    after: { customerId },
+    after: {
+      customerId,
+      identityRecorded,
+      channelType: existing.channelType,
+    },
   });
 }
 
@@ -658,6 +694,14 @@ export async function unlinkConversationCustomer(ctx: OrgContext, conversationId
   if (!existing.customerId) return;
 
   await prisma.$transaction(async (tx) => {
+    const linkedParticipant = await tx.conversationParticipant.findFirst({
+      where: {
+        ...scope(ctx),
+        conversationId: existing.id,
+        type: "CUSTOMER",
+        customerId: existing.customerId,
+      },
+    });
     await tx.conversation.update({
       where: { id: existing.id },
       data: { customerId: null },
@@ -672,9 +716,23 @@ export async function unlinkConversationCustomer(ctx: OrgContext, conversationId
         type: "CUSTOMER",
         // Keep a neutral placeholder, never the unlinked customer's name —
         // unlinking must not smear personal data onto the conversation row.
+        // The channel reference stays: it belongs to the conversation's
+        // counterpart, not to the customer record that was unlinked.
         displayName: "Unlinked counterpart",
+        externalRef: linkedParticipant?.externalRef ?? null,
       },
     });
+    // Unlinking withdraws the identity claim this link established —
+    // otherwise the very next inbound message would silently re-link.
+    if (linkedParticipant?.externalRef && existing.customerId) {
+      await removeCustomerIdentity(
+        tx,
+        ctx.organisation.id,
+        existing.customerId,
+        existing.channelType,
+        linkedParticipant.externalRef,
+      );
+    }
     await tx.activity.create({
       data: {
         organisationId: ctx.organisation.id,
