@@ -144,6 +144,11 @@ export async function getConversation(ctx: OrgContext, id: string) {
         take: 50,
         include: { author: { include: { user: { select: { name: true } } } } },
       },
+      tasks: {
+        orderBy: [{ status: "asc" }, { dueAt: "asc" }, { createdAt: "desc" }],
+        take: 20,
+        include: { assignee: { include: { user: { select: { name: true } } } } },
+      },
       activities: { orderBy: { occurredAt: "desc" }, take: 50 },
     },
   });

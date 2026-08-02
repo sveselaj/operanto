@@ -41,6 +41,7 @@ const { eraseCustomer, redactExpiredMessages } = await import(
   "@/lib/services/privacy"
 );
 const { getCustomerContext } = await import("@/lib/services/customer-context");
+const { createTask, listTasks, setTaskStatus } = await import("@/lib/services/tasks");
 
 async function makeCtx(slug: string, role: "ADMIN" | "SUPERVISOR" | "OPERATOR" = "ADMIN") {
   const organisation =
@@ -494,6 +495,129 @@ describeDb("customer context (Slice 2)", () => {
     const ctxB = await makeCtx("org-b");
     const customerA = await makeCustomer(ctxA.organisation.id, { name: "Org A person" });
     expect(await getCustomerContext(ctxB, customerA.id)).toBeNull();
+  });
+});
+
+describeDb("conversation workflows (Slice 3)", () => {
+  it("creates a task from a conversation with timeline activity and id-only audit", async () => {
+    const ctx = await makeCtx("org-a");
+    const customer = await makeCustomer(ctx.organisation.id, { name: "Busy person" });
+    const conversation = await createManualConversation(ctx, {
+      customerId: customer.id,
+      subject: "Needs follow-up",
+    });
+
+    const task = await createTask(ctx, {
+      title: "Call back about delivery slot",
+      conversationId: conversation.id,
+      assignedMembershipId: ctx.membership.id,
+    });
+    expect(task.conversationId).toBe(conversation.id);
+
+    const created = await db.activity.findFirst({
+      where: { conversationId: conversation.id, activityType: "task.created" },
+    });
+    expect(created).not.toBeNull();
+    expect(created!.customerId).toBe(customer.id);
+
+    await setTaskStatus(ctx, task.id, "COMPLETED");
+    const completed = await db.activity.findFirst({
+      where: { conversationId: conversation.id, activityType: "task.completed" },
+    });
+    expect(completed).not.toBeNull();
+
+    // Audit rows carry ids only — the title is redactable free text.
+    const audits = await db.auditEvent.findMany({
+      where: { targetType: "Task", targetId: task.id },
+    });
+    expect(audits.length).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(audits.map((a) => a.afterMetadata))).not.toContain(
+      "Call back about delivery slot",
+    );
+  });
+
+  it("blocks new follow-up work for a restricted customer", async () => {
+    const ctx = await makeCtx("org-a");
+    const customer = await makeCustomer(ctx.organisation.id, {
+      name: "Disputing person",
+      restrictedAt: new Date(),
+    });
+    const conversation = await createManualConversation(ctx, {
+      customerId: customer.id,
+    });
+    await expect(
+      createTask(ctx, { title: "should not exist", conversationId: conversation.id }),
+    ).rejects.toThrow(/restricted/);
+    expect(await db.task.count()).toBe(0);
+  });
+
+  it("rejects a conversation from another organisation", async () => {
+    const ctxA = await makeCtx("org-a");
+    const ctxB = await makeCtx("org-b");
+    const conversation = await createManualConversation(ctxA, {
+      counterpartName: "Org A case",
+    });
+    await expect(
+      createTask(ctxB, { title: "cross-tenant", conversationId: conversation.id }),
+    ).rejects.toThrow("Conversation not found");
+  });
+
+  it("operators see tasks on conversations assigned to them", async () => {
+    const admin = await makeCtx("org-a", "ADMIN");
+    const operator = await makeCtx("org-a", "OPERATOR");
+    const conversation = await createManualConversation(admin, {
+      counterpartName: "Handed over",
+      assignedMembershipId: operator.membership.id,
+    });
+    const task = await createTask(admin, {
+      title: "Operator should see this",
+      conversationId: conversation.id,
+    });
+
+    const visible = await listTasks(operator);
+    expect(visible.map((t) => t.id)).toContain(task.id);
+
+    // But not tasks on conversations they cannot access.
+    const other = await createManualConversation(admin, {
+      counterpartName: "Admin-only",
+    });
+    const hidden = await createTask(admin, {
+      title: "Operator should NOT see this",
+      conversationId: other.id,
+    });
+    expect((await listTasks(operator)).map((t) => t.id)).not.toContain(hidden.id);
+  });
+
+  it("erasure redacts conversation-task titles and descriptions", async () => {
+    const ctx = await makeCtx("org-a");
+    const customer = await makeCustomer(ctx.organisation.id, { name: "Vlora Berisha" });
+    const conversation = await createManualConversation(ctx, {
+      customerId: customer.id,
+    });
+    await createTask(ctx, {
+      title: "Call Vlora Berisha about the order",
+      description: "She asked about +383 44 xxx xxx",
+      conversationId: conversation.id,
+    });
+
+    await eraseCustomer(ctx, customer.id, "Art. 17 request");
+    const tasks = await db.task.findMany();
+    expect(tasks[0]!.title).toBe("[erased]");
+    expect(tasks[0]!.description).toBeNull();
+  });
+
+  it("conversation-linked open tasks appear in the customer context", async () => {
+    const ctx = await makeCtx("org-a");
+    const customer = await makeCustomer(ctx.organisation.id, { name: "Known person" });
+    const conversation = await createManualConversation(ctx, {
+      customerId: customer.id,
+    });
+    const task = await createTask(ctx, {
+      title: "Prepare viewing options",
+      conversationId: conversation.id,
+    });
+    const context = await getCustomerContext(ctx, customer.id);
+    expect(context!.openTasks.map((t) => t.id)).toContain(task.id);
   });
 });
 

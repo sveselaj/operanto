@@ -17,7 +17,9 @@ import {
   assignAction,
   changePriorityAction,
   changeStatusAction,
+  createTaskFromConversationAction,
   linkCustomerAction,
+  toggleConversationTaskAction,
   unlinkCustomerAction,
 } from "./actions";
 import { MessageComposer, NoteForm } from "./composer-forms";
@@ -321,6 +323,99 @@ export default async function ConversationDetailPage({
                   Assign
                 </button>
               </form>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-border bg-card p-4">
+            <h2 className="mb-3 text-sm font-semibold">Tasks</h2>
+            <div className="space-y-3">
+              <form action={createTaskFromConversationAction} className="space-y-2">
+                <input type="hidden" name="conversationId" value={conversation.id} />
+                <input
+                  name="title"
+                  required
+                  placeholder="Follow-up task for this conversation…"
+                  aria-label="Task title"
+                  disabled={restricted}
+                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
+                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="datetime-local"
+                    name="dueAt"
+                    aria-label="Due date"
+                    disabled={restricted}
+                    className="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
+                  />
+                  {canAssign ? (
+                    <select
+                      name="assignedMembershipId"
+                      defaultValue=""
+                      aria-label="Task assignee"
+                      disabled={restricted}
+                      className="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
+                    >
+                      <option value="">Unassigned</option>
+                      {members.map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.user.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                </div>
+                <button
+                  type="submit"
+                  disabled={restricted}
+                  className="h-8 rounded-md border border-border px-3 text-xs hover:bg-muted disabled:opacity-50"
+                >
+                  Create task
+                </button>
+                {restricted ? (
+                  <p className="text-xs text-warning">
+                    Processing is restricted — no new follow-up work may be created.
+                  </p>
+                ) : null}
+              </form>
+              {conversation.tasks.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No tasks yet.</p>
+              ) : (
+                conversation.tasks.map((task) => (
+                  <div key={task.id} className="flex items-start gap-2 text-sm">
+                    <form action={toggleConversationTaskAction}>
+                      <input type="hidden" name="conversationId" value={conversation.id} />
+                      <input type="hidden" name="taskId" value={task.id} />
+                      <input
+                        type="hidden"
+                        name="nextStatus"
+                        value={task.status === "OPEN" ? "COMPLETED" : "OPEN"}
+                      />
+                      <button
+                        type="submit"
+                        className="mt-0.5 h-4 w-4 rounded border border-input bg-background text-primary"
+                        aria-label={task.status === "OPEN" ? "Complete task" : "Reopen task"}
+                      >
+                        {task.status === "COMPLETED" ? "✓" : ""}
+                      </button>
+                    </form>
+                    <div className="min-w-0 flex-1">
+                      <p
+                        className={
+                          task.status === "COMPLETED"
+                            ? "text-muted-foreground line-through"
+                            : undefined
+                        }
+                      >
+                        {task.title}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {task.assignee?.user.name ?? "Unassigned"} · {task.priority}
+                        {task.dueAt ? ` · due ${formatDateTime(task.dueAt)}` : null}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </section>
 

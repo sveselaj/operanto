@@ -426,6 +426,9 @@ model Task {
   id                    String       @id @default(cuid())
   organisationId        String
   opportunityId         String?
+  /// Set when the task was raised from a conversation, so the work stays
+  /// visible in that conversation's timeline and the customer's context.
+  conversationId        String?
   assignedMembershipId  String?
   createdByMembershipId String?
   title                 String
@@ -437,14 +440,16 @@ model Task {
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
-  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  opportunity  Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-  assignee     Membership?  @relation("TaskAssignee", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
-  createdBy    Membership?  @relation("TaskCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  opportunity  Opportunity?  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  assignee     Membership?   @relation("TaskAssignee", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
+  createdBy    Membership?   @relation("TaskCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
 
   @@index([organisationId, status, dueAt])
   @@index([organisationId, assignedMembershipId])
   @@index([opportunityId])
+  @@index([conversationId])
 }
 
 // ── Conversations foundation ───────────────────────────────────────
@@ -559,6 +564,7 @@ model Conversation {
   messages     Message[]
   notes        ConversationNote[]
   activities   Activity[]
+  tasks        Task[]
 
   @@unique([organisationId, channelConnectionId, providerThreadId])
   @@index([organisationId, lastMessageAt])

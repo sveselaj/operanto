@@ -14,6 +14,7 @@ import {
   linkConversationCustomer,
   unlinkConversationCustomer,
 } from "@/lib/services/conversations";
+import { createTask, setTaskStatus } from "@/lib/services/tasks";
 
 export type ComposerResult = { error: string } | { ok: true } | null;
 
@@ -79,6 +80,34 @@ export async function unlinkCustomerAction(formData: FormData) {
   const id = String(formData.get("conversationId") ?? "");
   if (!id) return;
   await runControl(id, () => unlinkConversationCustomer(ctx, id));
+}
+
+export async function createTaskFromConversationAction(formData: FormData) {
+  const ctx = await requireOrg();
+  const conversationId = String(formData.get("conversationId") ?? "");
+  const title = String(formData.get("title") ?? "");
+  const dueAtRaw = String(formData.get("dueAt") ?? "");
+  const assignedMembershipId = String(formData.get("assignedMembershipId") ?? "");
+  if (!conversationId || !title.trim()) return;
+  const dueAt = dueAtRaw ? new Date(dueAtRaw) : undefined;
+  await runControl(conversationId, () =>
+    createTask(ctx, {
+      title,
+      conversationId,
+      assignedMembershipId: assignedMembershipId || undefined,
+      dueAt: dueAt && !Number.isNaN(dueAt.getTime()) ? dueAt : undefined,
+    }),
+  );
+}
+
+export async function toggleConversationTaskAction(formData: FormData) {
+  const ctx = await requireOrg();
+  const conversationId = String(formData.get("conversationId") ?? "");
+  const taskId = String(formData.get("taskId") ?? "");
+  const nextStatus = String(formData.get("nextStatus") ?? "");
+  if (!conversationId || !taskId) return;
+  if (nextStatus !== "OPEN" && nextStatus !== "COMPLETED") return;
+  await runControl(conversationId, () => setTaskStatus(ctx, taskId, nextStatus));
 }
 
 export async function addMessageAction(
