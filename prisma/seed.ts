@@ -306,6 +306,37 @@ async function main() {
         created.push({ id: account.id, name: account.name, status: company.status });
       }
 
+      // One suppressed fictional contact (G2): visible, never sendable.
+      const suppressedContact = await prisma.growthContact.create({
+        data: {
+          organisationId: organisation.id,
+          accountId: created[5]!.id,
+          firstName: "Nora",
+          lastName: "Beispiel",
+          email: "nora@renovex-sued.example",
+          emailNormalized: "nora@renovex-sued.example",
+          source: "seed_demo",
+          suppressedAt: new Date(),
+        },
+      });
+      await prisma.suppressionEntry.upsert({
+        where: {
+          organisationId_emailNormalized: {
+            organisationId: organisation.id,
+            emailNormalized: "nora@renovex-sued.example",
+          },
+        },
+        update: {},
+        create: {
+          organisationId: organisation.id,
+          emailNormalized: "nora@renovex-sued.example",
+          accountId: created[5]!.id,
+          contactId: suppressedContact.id,
+          reason: "requested",
+          source: "seed_demo",
+        },
+      });
+
       // Duplicate example: a second source record pointing at the first
       // account (constraint would refuse a second row with the same domain).
       await prisma.accountSourceRecord.create({

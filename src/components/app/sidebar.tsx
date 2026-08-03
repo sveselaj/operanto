@@ -7,6 +7,7 @@ import {
   Plug,
   Settings,
   ShieldCheck,
+  Sprout,
   Target,
   Users,
 } from "lucide-react";
@@ -22,7 +23,21 @@ const CORE_ITEMS = [
   { href: "/activity", label: "Activity", icon: Activity },
 ];
 
-export function Sidebar({ role }: { role: MembershipRole }) {
+export function Sidebar({
+  role,
+  growth = false,
+}: {
+  role: MembershipRole;
+  growth?: boolean;
+}) {
+  const growthItems =
+    growth && can(role, "growth:view")
+      ? [
+          { href: "/growth", label: "Overview", icon: Sprout },
+          { href: "/growth/target-profiles", label: "Target Profiles", icon: Target },
+          { href: "/growth/accounts", label: "Accounts", icon: Users },
+        ]
+      : [];
   const adminItems = [
     ...(can(role, "integrations:manage")
       ? [{ href: "/integrations", label: "Integrations", icon: Plug }]
@@ -51,6 +66,23 @@ export function Sidebar({ role }: { role: MembershipRole }) {
             {item.label}
           </Link>
         ))}
+        {growthItems.length > 0 ? (
+          <div className="pt-4">
+            <p className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-white/40">
+              Growth
+            </p>
+            {growthItems.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm hover:bg-white/10 hover:text-white"
+              >
+                <item.icon className="h-4 w-4" aria-hidden />
+                {item.label}
+              </Link>
+            ))}
+          </div>
+        ) : null}
         {adminItems.length > 0 ? (
           <div className="pt-4">
             <p className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-white/40">

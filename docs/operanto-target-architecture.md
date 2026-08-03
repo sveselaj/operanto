@@ -272,3 +272,11 @@ commerce suite (quoting, catalogue, business rules, appointments, document
 extraction) — deferred by decision 1 as future vertical capabilities
 (Nagelista, Pronatona, and other adapters); Telegram and Infobip connectors
 (deprioritised by decision 2).
+
+
+## Delivered addendum (2026-08-03)
+
+Growth Prospecting Program G1+G2 delivered (flag-gated, no external
+execution): 13 org-scoped Growth entities, 17 permissions, lifecycle
+machine, staged CSV import with constraint-backed dedupe, suppression and
+privacy lifecycle integration. See docs/operanto-growth-g2.md.

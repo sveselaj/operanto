@@ -57,6 +57,8 @@ export default defineConfig({
           META_GRAPH_BASE_URL: "http://127.0.0.1:4545",
           OPERANTO_WHATSAPP_INBOUND_ENABLED: "1",
           OPERANTO_WHATSAPP_OUTBOUND_ENABLED: "1",
+          // Growth G2 e2e; staging/production keep the flag off.
+          OPERANTO_GROWTH_ENABLED: "1",
         },
       },
 });

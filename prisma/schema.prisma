@@ -95,6 +95,7 @@ model Organisation {
   outreachDrafts           OutreachDraft[]
   outreachDraftVersions    OutreachDraftVersion[]
   suppressionEntries       SuppressionEntry[]
+  growthImports            GrowthImport[]
 }
 
 model User {
@@ -415,6 +416,8 @@ model Activity {
   customerId        String?
   opportunityId     String?
   conversationId    String?
+  /// Growth prospecting: account-level timeline events (G2, additive).
+  growthAccountId   String?
   actorType         ActorType
   actorUserId       String?
   actorMembershipId String?
@@ -429,6 +432,7 @@ model Activity {
   customer     Customer?     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   opportunity  Opportunity?  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  growthAccount GrowthAccount? @relation(fields: [growthAccountId], references: [id], onDelete: Cascade)
 
   @@index([organisationId, occurredAt])
   @@index([opportunityId, occurredAt])
@@ -471,6 +475,7 @@ model Task {
   organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   opportunity  Opportunity?  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  growthAccount GrowthAccount? @relation(fields: [growthAccountId], references: [id], onDelete: Cascade)
   assignee     Membership?   @relation("TaskAssignee", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
   createdBy    Membership?   @relation("TaskCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
 
@@ -1166,6 +1171,8 @@ model GrowthAccount {
   score         AccountScore?
   briefs        AccountBrief[]
   drafts        OutreachDraft[]
+  activities    Activity[]
+  tasks         Task[]
 
   @@unique([organisationId, domainNormalized])
   @@index([organisationId, status])
@@ -1420,4 +1427,39 @@ model SuppressionEntry {
 
   @@unique([organisationId, emailNormalized])
   @@index([organisationId, domainNormalized])
+}
+
+
+enum GrowthImportStatus {
+  PREVIEWED
+  COMMITTED
+  FAILED
+}
+
+/// One CSV import operation (G2). Deliberately stateless about content:
+/// the raw file is never persisted — preview and commit each re-receive the
+/// text and re-parse deterministically, so retention of raw rows is moot.
+/// The report JSON holds row numbers, error codes and duplicate reason
+/// codes only — never row content.
+model GrowthImport {
+  id                    String             @id @default(cuid())
+  organisationId        String
+  createdByMembershipId String?
+  filename              String
+  checksum              String
+  delimiter             String
+  columnMapping         Json
+  status                GrowthImportStatus @default(PREVIEWED)
+  rowCount              Int                @default(0)
+  acceptedCount         Int                @default(0)
+  rejectedCount         Int                @default(0)
+  duplicateCount        Int                @default(0)
+  suppressedCount       Int                @default(0)
+  report                Json?
+  createdAt             DateTime           @default(now())
+  completedAt           DateTime?
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId, createdAt])
 }

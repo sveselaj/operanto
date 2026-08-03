@@ -115,6 +115,7 @@ ordering in §7.
 | Brand voice / profile | `legacy` | `BrandVoice` model, `brand-voices.ts`, `brand-voice-manager.tsx` (233 ln) | Prototype only | Working | Port in Growth slice; extend toward full brand profile | Low | Slice 6 |
 | Content drafts + studio (generate from conversation/insight) | `legacy` | `lib/services/content.ts` (231 ln), `studio/*` | Prototype only | Working | Port in Growth slice | Low | Slice 6 |
 | Campaigns, content calendar, scheduled publishing | — | Only `queue_social_post` tool + mock social adapter (`verticals/real-estate/social-adapter.ts`) | Missing (publishing), Prototype only (queue mock) | — | Design Campaign model in Growth slice; real publishing needs channel decision | — | Slice 6 |
+| Prospecting: target profiles, CSV import, dedupe, account review (Growth G1+G2, 2026-08-03) | `main` | `src/lib/services/growth/*`, `/growth` (flag-gated) | Implemented | Working | Canonical foundation for G3+ research | — | Delivered |
 | Multilingual content | `legacy` | `translateMessage` task (mock passthrough at 0.2 confidence in mock mode) | Prototype only | Partial | Port with AI layer | Low | Backlog |
 | Performance attribution (campaign → conversations → outcomes) | `spec` | — | Missing | — | Requires Conversations + Growth linkage; design only | — | Slice 6+ |
 | Audience definitions, lead reactivation | `spec` | — (`search_conversations` supports `notContactedForDays` — a building block) | Missing | — | Defer | — | Backlog |

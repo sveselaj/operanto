@@ -1,7 +1,13 @@
 # Operanto Growth — Slice 6 discovery (documentation only)
 
-Status: **discovery**. No migrations, runtime services, provider integrations
-or navigation entries exist or may be created from this document. Runtime
+Status: **discovery**, partially superseded by delivery: the separate
+Growth *Prospecting Program* shipped G1 (domain foundation) and G2 (target
+profiles + CSV import) in 2026-08-03 under explicit per-stage
+authorization — see `docs/operanto-growth-prospecting.md` and
+`docs/operanto-growth-g2.md`. The client-facing Growth capability this
+document describes (Outrank articles, publishing, attribution) remains
+gated. No further migrations, runtime services, provider integrations or
+navigation entries may be created from this document. Runtime
 implementation begins only after the WhatsApp staging pilot findings have
 been reviewed and Slice 6 is explicitly commissioned.
 
