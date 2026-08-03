@@ -68,3 +68,52 @@ const DRAFT_TRANSITIONS: Record<string, string[]> = {
 export function canTransitionDraft(from: string, to: string): boolean {
   return DRAFT_TRANSITIONS[from]?.includes(to) ?? false;
 }
+
+/**
+ * Release-scoped transition boundary. The full machine above describes the
+ * WHOLE program; each release additionally enforces the subset it has
+ * actually been authorized to operate. G2 (pre-research) permits exactly:
+ * IMPORTED → NEEDS_REVIEW | READY_FOR_RESEARCH and NEEDS_REVIEW →
+ * READY_FOR_RESEARCH | REJECTED. Suppression is NOT an ordinary transition
+ * — it goes through the dedicated suppression service only. Later states
+ * (RESEARCHING onward) are unreachable until the release that owns them.
+ */
+const G2_TRANSITIONS: ReadonlyArray<`${GrowthAccountStatus}>${GrowthAccountStatus}`> = [
+  "IMPORTED>NEEDS_REVIEW",
+  "IMPORTED>READY_FOR_RESEARCH",
+  "NEEDS_REVIEW>READY_FOR_RESEARCH",
+  "NEEDS_REVIEW>REJECTED",
+];
+
+export function releasePermitsTransition(
+  from: GrowthAccountStatus,
+  to: GrowthAccountStatus,
+): boolean {
+  return G2_TRANSITIONS.includes(`${from}>${to}`);
+}
+
+export class ReleaseBoundaryError extends Error {
+  constructor(from: GrowthAccountStatus, to: GrowthAccountStatus) {
+    super(
+      `Transition ${from} → ${to} is outside the currently authorized Growth release`,
+    );
+    this.name = "ReleaseBoundaryError";
+  }
+}
+
+/**
+ * Target-profile lifecycle — server-enforced, mirrored by the UI:
+ * DRAFT → ACTIVE | ARCHIVED (abandoned drafts may be archived);
+ * ACTIVE → PAUSED | ARCHIVED; PAUSED → ACTIVE | ARCHIVED;
+ * ARCHIVED is terminal — no documented rule authorizes reopening.
+ */
+const PROFILE_TRANSITIONS: Record<string, string[]> = {
+  DRAFT: ["ACTIVE", "ARCHIVED"],
+  ACTIVE: ["PAUSED", "ARCHIVED"],
+  PAUSED: ["ACTIVE", "ARCHIVED"],
+  ARCHIVED: [],
+};
+
+export function canTransitionProfile(from: string, to: string): boolean {
+  return PROFILE_TRANSITIONS[from]?.includes(to) ?? false;
+}

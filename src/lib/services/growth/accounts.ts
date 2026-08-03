@@ -5,7 +5,11 @@ import { requirePermission } from "@/lib/rbac";
 import { scope, type OrgContext } from "@/lib/org-context";
 import { audit } from "@/lib/audit";
 import { normalizeEmail } from "@/lib/normalize";
-import { assertTransition } from "@/lib/services/growth/lifecycle";
+import {
+  assertTransition,
+  ReleaseBoundaryError,
+  releasePermitsTransition,
+} from "@/lib/services/growth/lifecycle";
 import {
   normalizeCompanyName,
   normalizeDomain,
@@ -144,13 +148,19 @@ export async function transitionGrowthAccount(
     where: { ...scope(ctx), id: accountId },
   });
   if (!account) throw new Error("Account not found");
+  if (to === "SUPPRESSED") {
+    throw new Error("Suppression goes through the dedicated suppression service");
+  }
   assertTransition(account.status, to);
+  // Release boundary: the G1 machine describes the whole program; G2 only
+  // operates its pre-research subset. A crafted request cannot walk an
+  // account into RESEARCHING or beyond.
+  if (!releasePermitsTransition(account.status, to)) {
+    throw new ReleaseBoundaryError(account.status, to);
+  }
   await prisma.growthAccount.update({
     where: { id: account.id },
-    data: {
-      status: to,
-      ...(to === "SUPPRESSED" ? { suppressedAt: new Date() } : {}),
-    },
+    data: { status: to },
   });
   await audit(ctx, {
     eventType: "growth.account_status_changed",
@@ -158,6 +168,16 @@ export async function transitionGrowthAccount(
     targetId: account.id,
     before: { status: account.status },
     after: { status: to, reason: reason ?? null },
+  });
+  await prisma.activity.create({
+    data: {
+      organisationId: ctx.organisation.id,
+      growthAccountId: account.id,
+      actorType: "STAFF",
+      actorMembershipId: ctx.membership.id,
+      activityType: "growth.account_status_changed",
+      summary: `Account moved to ${to.toLowerCase().replace(/_/g, " ")}`,
+    },
   });
 }
 
@@ -223,6 +243,16 @@ export async function suppressGrowthAccount(
     targetType: "GrowthAccount",
     targetId: account.id,
     after: { reason, contacts: account.contacts.length },
+  });
+  await prisma.activity.create({
+    data: {
+      organisationId: ctx.organisation.id,
+      growthAccountId: account.id,
+      actorType: "STAFF",
+      actorMembershipId: ctx.membership.id,
+      activityType: "growth.account_suppressed",
+      summary: "Account suppressed — excluded from all future Growth execution",
+    },
   });
 }
 
@@ -328,4 +358,230 @@ export async function listGrowthAccounts(
     orderBy: { updatedAt: "desc" },
     take: 200,
   });
+}
+
+const EDITABLE_FIELDS = [
+  "name",
+  "tradingName",
+  "domain",
+  "website",
+  "industry",
+  "description",
+  "country",
+  "region",
+  "city",
+  "employeeEstimate",
+  "phone",
+  "publicEmail",
+  "targetProfileId",
+] as const;
+export type EditableAccountField = (typeof EDITABLE_FIELDS)[number];
+
+/**
+ * Deterministic account editing. Recomputes normalized keys when identity
+ * fields change; a domain edit can neither collide with another account
+ * (constraint) nor bypass an existing domain suppression (re-checked and
+ * re-applied). Audit records changed field NAMES only.
+ */
+export async function updateGrowthAccount(
+  ctx: OrgContext,
+  accountId: string,
+  input: Partial<Record<EditableAccountField, string | number | null>>,
+): Promise<void> {
+  requirePermission(ctx.membership.role, "growth:edit_accounts");
+  const account = await prisma.growthAccount.findFirst({
+    where: { ...scope(ctx), id: accountId },
+  });
+  if (!account) throw new Error("Account not found");
+
+  const data: Record<string, unknown> = {};
+  for (const field of EDITABLE_FIELDS) {
+    if (!(field in input)) continue;
+    const raw = input[field];
+    const value = typeof raw === "string" ? raw.trim() || null : (raw ?? null);
+    data[field] = value;
+  }
+  if ("name" in data) {
+    if (!data.name) throw new Error("Account name is required");
+    data.nameNormalized = normalizeCompanyName(String(data.name));
+  }
+  if ("employeeEstimate" in data && data.employeeEstimate !== null) {
+    const estimate = Number(data.employeeEstimate);
+    if (!Number.isInteger(estimate) || estimate < 0) {
+      throw new Error("Employee estimate must be a whole number");
+    }
+    data.employeeEstimate = estimate;
+  }
+  if ("country" in data && data.country) {
+    data.country = String(data.country).toUpperCase();
+  }
+  if ("targetProfileId" in data && data.targetProfileId) {
+    const profile = await prisma.targetProfile.findFirst({
+      where: { ...scope(ctx), id: String(data.targetProfileId) },
+      select: { id: true },
+    });
+    if (!profile) throw new Error("Target profile not found");
+  }
+  if ("domain" in data || "website" in data) {
+    const domainNormalized = normalizeDomain(
+      String(data.domain ?? account.domain ?? data.website ?? account.website ?? "") || null,
+    );
+    data.domainNormalized = domainNormalized;
+    if (domainNormalized) {
+      const suppressed = await prisma.suppressionEntry.findFirst({
+        where: {
+          organisationId: ctx.organisation.id,
+          emailNormalized: `domain:${domainNormalized}`,
+        },
+        select: { id: true },
+      });
+      if (suppressed && !account.suppressedAt) {
+        // An edit must not steer an account out from under a suppression.
+        data.suppressedAt = new Date();
+        data.status = "SUPPRESSED";
+      }
+    }
+  }
+  const changedFields = Object.keys(data).filter(
+    (key) =>
+      JSON.stringify(data[key]) !==
+      JSON.stringify(account[key as keyof typeof account]),
+  );
+  if (changedFields.length === 0) return;
+  try {
+    await prisma.growthAccount.update({ where: { id: account.id }, data });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      throw new Error("Another account already uses this domain");
+    }
+    throw error;
+  }
+  await audit(ctx, {
+    eventType: "growth.account_updated",
+    targetType: "GrowthAccount",
+    targetId: account.id,
+    after: { changedFields },
+  });
+}
+
+export async function assignGrowthAccount(
+  ctx: OrgContext,
+  accountId: string,
+  membershipId: string | null,
+): Promise<void> {
+  requirePermission(ctx.membership.role, "growth:assign_accounts");
+  const account = await prisma.growthAccount.findFirst({
+    where: { ...scope(ctx), id: accountId },
+  });
+  if (!account) throw new Error("Account not found");
+  if (membershipId) {
+    const membership = await prisma.membership.findFirst({
+      where: {
+        id: membershipId,
+        organisationId: ctx.organisation.id,
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+    if (!membership) throw new Error("Assignee must be an active member of this organisation");
+  }
+  await prisma.growthAccount.update({
+    where: { id: account.id },
+    data: { ownerMembershipId: membershipId },
+  });
+  await audit(ctx, {
+    eventType: "growth.account_assigned",
+    targetType: "GrowthAccount",
+    targetId: account.id,
+    before: { ownerMembershipId: account.ownerMembershipId },
+    after: { ownerMembershipId: membershipId },
+  });
+  await prisma.activity.create({
+    data: {
+      organisationId: ctx.organisation.id,
+      growthAccountId: account.id,
+      actorType: "STAFF",
+      actorMembershipId: ctx.membership.id,
+      activityType: "growth.account_assigned",
+      summary: membershipId ? "Account owner assigned" : "Account owner removed",
+    },
+  });
+}
+
+export async function getGrowthAccount(ctx: OrgContext, accountId: string) {
+  requirePermission(ctx.membership.role, "growth:view");
+  return prisma.growthAccount.findFirst({
+    where: { ...scope(ctx), id: accountId },
+    include: {
+      targetProfile: { select: { id: true, name: true } },
+      contacts: { orderBy: { createdAt: "asc" } },
+      sources: { orderBy: { importedAt: "desc" }, take: 20 },
+      activities: { orderBy: { occurredAt: "desc" }, take: 30 },
+      tasks: { orderBy: { createdAt: "desc" }, take: 10 },
+    },
+  });
+}
+
+export type AccountListFilter = {
+  status?: GrowthAccountStatus;
+  targetProfileId?: string;
+  country?: string;
+  industry?: string;
+  ownerMembershipId?: string;
+  importBatchId?: string;
+  duplicatesOnly?: boolean;
+  search?: string;
+  page?: number;
+};
+
+export async function listGrowthAccountsPage(
+  ctx: OrgContext,
+  filter: AccountListFilter = {},
+) {
+  requirePermission(ctx.membership.role, "growth:view");
+  const take = 25;
+  const page = Math.max(1, filter.page ?? 1);
+  const where: Prisma.GrowthAccountWhereInput = {
+    ...scope(ctx),
+    ...(filter.status ? { status: filter.status } : {}),
+    ...(filter.targetProfileId ? { targetProfileId: filter.targetProfileId } : {}),
+    ...(filter.country ? { country: filter.country.toUpperCase() } : {}),
+    ...(filter.industry ? { industry: filter.industry } : {}),
+    ...(filter.ownerMembershipId ? { ownerMembershipId: filter.ownerMembershipId } : {}),
+    ...(filter.importBatchId
+      ? { sources: { some: { importBatchId: filter.importBatchId } } }
+      : {}),
+    ...(filter.duplicatesOnly
+      ? { sources: { some: { duplicateOfAccountId: { not: null } } } }
+      : {}),
+    ...(filter.search
+      ? {
+          OR: [
+            { name: { contains: filter.search, mode: "insensitive" } },
+            { domainNormalized: { contains: filter.search.toLowerCase() } },
+          ],
+        }
+      : {}),
+  };
+  const [total, accounts] = await Promise.all([
+    prisma.growthAccount.count({ where }),
+    prisma.growthAccount.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * take,
+      take,
+      include: {
+        targetProfile: { select: { name: true } },
+        sources: {
+          where: { duplicateOfAccountId: { not: null } },
+          select: { id: true },
+          take: 1,
+        },
+      },
+    }),
+  ]);
+  return { total, page, pageSize: take, accounts };
 }
