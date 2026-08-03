@@ -4,6 +4,7 @@ import { retryPendingEvents } from "@/lib/events/process";
 import { retryPendingChannelEvents } from "@/lib/services/channel-ingest";
 import {
   redactExpiredChannelPayloads,
+  redactExpiredGrowthContacts,
   redactExpiredMessages,
   redactExpiredPayloads,
 } from "@/lib/services/privacy";
@@ -26,6 +27,7 @@ async function handle(req: Request) {
   const retention = await redactExpiredPayloads();
   const messageRetention = await redactExpiredMessages();
   const channelRetention = await redactExpiredChannelPayloads();
+  const prospectRetention = await redactExpiredGrowthContacts();
   return NextResponse.json({
     ok: true,
     ...result,
@@ -33,6 +35,7 @@ async function handle(req: Request) {
     retention,
     messageRetention,
     channelRetention,
+    prospectRetention,
   });
 }
 

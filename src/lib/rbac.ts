@@ -56,7 +56,27 @@ export type Permission =
   /** Administer organisation-authorized message templates. */
   | "templates:manage"
   /** Manual consent corrections (compliance-sensitive). */
-  | "consent:manage";
+  | "consent:manage"
+  /* ── Growth Prospecting Program (G1). Drafting and approval authority
+   *    are deliberately separate permissions; Release 1 has no sending
+   *    permission at all — recording a manual send is the closest act. */
+  | "growth:view"
+  | "growth:manage_target_profiles"
+  | "growth:import_accounts"
+  | "growth:edit_accounts"
+  | "growth:run_research"
+  | "growth:review_evidence"
+  | "growth:override_scores"
+  | "growth:review_accounts"
+  | "growth:assign_accounts"
+  | "growth:manage_playbooks"
+  | "growth:generate_drafts"
+  | "growth:edit_drafts"
+  | "growth:approve_drafts"
+  | "growth:record_manual_send"
+  | "growth:manage_privacy"
+  | "growth:manage_providers"
+  | "growth:view_audit";
 
 const MATRIX: Record<MembershipRole, Permission[]> = {
   ADMIN: [
@@ -94,6 +114,23 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "messages:send",
     "templates:manage",
     "consent:manage",
+    "growth:view",
+    "growth:manage_target_profiles",
+    "growth:import_accounts",
+    "growth:edit_accounts",
+    "growth:run_research",
+    "growth:review_evidence",
+    "growth:override_scores",
+    "growth:review_accounts",
+    "growth:assign_accounts",
+    "growth:manage_playbooks",
+    "growth:generate_drafts",
+    "growth:edit_drafts",
+    "growth:approve_drafts",
+    "growth:record_manual_send",
+    "growth:manage_privacy",
+    "growth:manage_providers",
+    "growth:view_audit",
   ],
   SUPERVISOR: [
     "customers:view_all",
@@ -122,6 +159,21 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "messages:send",
     "templates:manage",
     "consent:manage",
+    "growth:view",
+    "growth:manage_target_profiles",
+    "growth:import_accounts",
+    "growth:edit_accounts",
+    "growth:run_research",
+    "growth:review_evidence",
+    "growth:override_scores",
+    "growth:review_accounts",
+    "growth:assign_accounts",
+    "growth:manage_playbooks",
+    "growth:generate_drafts",
+    "growth:edit_drafts",
+    "growth:approve_drafts",
+    "growth:record_manual_send",
+    "growth:view_audit",
   ],
   OPERATOR: [
     "customers:view_assigned",
@@ -138,6 +190,11 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "ai:run",
     "ai:read",
     "messages:send",
+    "growth:view",
+    "growth:run_research",
+    "growth:review_evidence",
+    "growth:generate_drafts",
+    "growth:edit_drafts",
   ],
 };
 

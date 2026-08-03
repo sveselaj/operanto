@@ -231,6 +231,247 @@ async function main() {
   }
 
   console.log(`Seed complete. Organisation: ${organisation.slug} (${organisation.id})`);
+  // ── Growth Prospecting Program demo fixtures (G1) ─────────────────
+  // Entirely fictional companies and people; every domain is .example
+  // (reserved, unroutable). Gated so ordinary seeds stay lean.
+  if (process.env.SEED_GROWTH_DEMO === "1") {
+    const existing = await prisma.targetProfile.findFirst({
+      where: { organisationId: organisation.id, name: "DACH Fenster & Renovierung (Demo)" },
+    });
+    if (!existing) {
+      const profile = await prisma.targetProfile.create({
+        data: {
+          organisationId: organisation.id,
+          name: "DACH Fenster & Renovierung (Demo)",
+          description:
+            "Fictional demo profile: German window/renovation installers, 10–100 employees, visible inquiry processes.",
+          industries: ["windows", "renovation", "home_improvement"],
+          regions: ["DE", "AT", "CH-de"],
+          companySizeMin: 10,
+          companySizeMax: 100,
+          characteristics: ["multiple branches", "quotation forms", "phone-based intake"],
+          decisionMakerRoles: ["Geschäftsführer", "Vertriebsleiter", "Leiter Kundenservice"],
+          positiveSignals: ["active advertising", "many reviews", "hiring service staff"],
+          negativeSignals: ["franchise HQ elsewhere", "no local operations"],
+          exclusionCriteria: ["competitors", "existing customers"],
+          operantoUseCases: ["unified inbox", "quotation intake", "WhatsApp handling", "follow-up automation"],
+          languages: ["de"],
+          scoringWeights: { profileFit: 20, operationalPain: 20, interactionVolume: 15, digitalReadiness: 15, budget: 10, access: 10, strategic: 5, evidenceQuality: 5 },
+          status: "ACTIVE",
+        },
+      });
+
+      const companies = [
+        { name: "Fenster Nordlicht GmbH", domain: "fenster-nordlicht.example", city: "Hamburg", status: "READY_FOR_ASSESSMENT" },
+        { name: "Rheinblick Fensterbau AG", domain: "rheinblick-fenster.example", city: "Köln", status: "READY_FOR_ASSESSMENT" },
+        { name: "Alpenglas Montagen GmbH", domain: "alpenglas-montagen.example", city: "München", status: "READY_FOR_ASSESSMENT" },
+        { name: "Sanierung Sonnenhof UG", domain: "sonnenhof-sanierung.example", city: "Leipzig", status: "APPROVED" },
+        { name: "Fensterwerk Elbtal GmbH", domain: "fensterwerk-elbtal.example", city: "Dresden", status: "APPROVED" },
+        { name: "Renovex Süd GmbH", domain: "renovex-sued.example", city: "Stuttgart", status: "REJECTED" },
+        { name: "Hausmodern Weserland KG", domain: "hausmodern-weserland.example", city: "Bremen", status: "REJECTED" },
+        { name: "Glasklar Fenster Berlin GmbH", domain: "glasklar-berlin.example", city: "Berlin", status: "DRAFT_PREPARED" },
+        { name: "Isolierprofi Ruhr GmbH", domain: "isolierprofi-ruhr.example", city: "Essen", status: "CONTACTED" },
+        { name: "Wintergarten Taunus GmbH", domain: "wintergarten-taunus.example", city: "Frankfurt", status: "REPLIED" },
+        { name: "Fassaden Franken OHG", domain: "fassaden-franken.example", city: "Nürnberg", status: "NEEDS_REVIEW" },
+        // Insufficient-data account: no domain, no evidence.
+        { name: "Bauelemente Nord (unvollständig)", domain: null, city: null, status: "NEEDS_REVIEW" },
+      ] as const;
+
+      const created: { id: string; name: string; status: string }[] = [];
+      for (const company of companies) {
+        const account = await prisma.growthAccount.create({
+          data: {
+            organisationId: organisation.id,
+            targetProfileId: profile.id,
+            name: company.name,
+            nameNormalized: company.name.toLowerCase().replace(/gmbh|ag|ug|kg|ohg|[^a-zäöüß0-9 ]/g, " ").replace(/\s+/g, " ").trim(),
+            domain: company.domain,
+            domainNormalized: company.domain,
+            website: company.domain ? `https://${company.domain}` : null,
+            industry: "windows_renovation",
+            country: "DE",
+            city: company.city,
+            employeeEstimate: 10 + created.length * 6,
+            status: company.status,
+            sources: {
+              create: {
+                organisationId: organisation.id,
+                provider: "seed_demo",
+                providerRecordId: `seed-${company.domain ?? company.name}`,
+                importBatchId: "seed-growth-demo",
+              },
+            },
+          },
+        });
+        created.push({ id: account.id, name: account.name, status: company.status });
+      }
+
+      // Duplicate example: a second source record pointing at the first
+      // account (constraint would refuse a second row with the same domain).
+      await prisma.accountSourceRecord.create({
+        data: {
+          organisationId: organisation.id,
+          accountId: created[0]!.id,
+          provider: "seed_demo_csv",
+          providerRecordId: "seed-duplicate-1",
+          duplicateOfAccountId: created[0]!.id,
+          importBatchId: "seed-growth-demo",
+        },
+      });
+
+      // Evidence + scores + brief for the assessment/approved accounts.
+      for (const account of created.slice(0, 5)) {
+        const run = await prisma.researchRun.create({
+          data: {
+            organisationId: organisation.id,
+            accountId: account.id,
+            provider: "mock",
+            status: "COMPLETED",
+            startedAt: new Date(),
+            completedAt: new Date(),
+          },
+        });
+        const fact = await prisma.researchEvidence.create({
+          data: {
+            organisationId: organisation.id,
+            accountId: account.id,
+            researchRunId: run.id,
+            category: "locations",
+            claim: "Operates three branches in the region",
+            classification: "VERIFIED_FACT",
+            sourceType: "website",
+            sourceUrl: `https://${account.name.toLowerCase().slice(0, 6)}.example/standorte`,
+            sourceTitle: "Standorte",
+            excerpt: "Unsere Standorte: drei Niederlassungen (fiktiv).",
+            confidence: 0.9,
+            provider: "mock",
+          },
+        });
+        const inference = await prisma.researchEvidence.create({
+          data: {
+            organisationId: organisation.id,
+            accountId: account.id,
+            researchRunId: run.id,
+            category: "service_load",
+            claim: "Likely receives inquiries through multiple uncoordinated teams",
+            classification: "INFERENCE",
+            sourceType: "analysis",
+            confidence: 0.6,
+            provider: "mock",
+          },
+        });
+        await prisma.researchEvidence.create({
+          data: {
+            organisationId: organisation.id,
+            accountId: account.id,
+            researchRunId: run.id,
+            category: "budget",
+            claim: "May have budget for digital tooling next fiscal year",
+            classification: "HYPOTHESIS",
+            sourceType: "analysis",
+            confidence: 0.3,
+            provider: "mock",
+          },
+        });
+        await prisma.accountScore.create({
+          data: {
+            organisationId: organisation.id,
+            accountId: account.id,
+            aiScore: 62 + created.indexOf(account) * 5,
+            aiComponents: { profileFit: 16, operationalPain: 14, interactionVolume: 12, digitalReadiness: 9, budget: 6, access: 5 },
+            aiExplanation: "Fictional demo score derived from mock evidence.",
+            aiModel: "mock",
+            aiPromptVersion: "growth-demo@1",
+            confidence: 0.55,
+            missingData: ["revenue estimate", "decision-maker contact"],
+          },
+        });
+        await prisma.accountBrief.create({
+          data: {
+            organisationId: organisation.id,
+            accountId: account.id,
+            version: 1,
+            sections: {
+              summary: "Fictional regional installer with three branches.",
+              profileAlignment: "Matches size and inquiry-process criteria.",
+              verifiedFacts: [fact.id],
+              inferences: [inference.id],
+              missing: ["revenue estimate"],
+              recommendedUseCases: ["unified inbox", "quotation intake"],
+              doNotUse: ["pricing", "competitor comparisons"],
+            },
+            evidenceIds: [fact.id, inference.id],
+            generatedByModel: "mock",
+            promptVersion: "growth-demo@1",
+          },
+        });
+      }
+
+      // Playbook + drafts: one heavily edited (2 versions), one approved,
+      // one manually sent.
+      const playbook = await prisma.outreachPlaybook.create({
+        data: {
+          organisationId: organisation.id,
+          targetProfileId: profile.id,
+          name: "DACH Erstkontakt E-Mail (Demo)",
+          language: "de",
+          channel: "email",
+          valuePropositions: ["Ein Posteingang für alle Kundenanfragen", "Schnellere Angebotserstellung"],
+          approvedClaims: ["Operanto bündelt Anfragen aus mehreren Kanälen"],
+          prohibitedClaims: ["Preisgarantien", "Zertifizierungszusagen", "Kundenreferenzen"],
+          tone: "sachlich, respektvoll, kurz",
+          callToAction: "15-minütiges Kennenlerngespräch",
+          requiredFooter: "Demo-Fußzeile (fiktiv) — Abmeldung jederzeit möglich.",
+        },
+      });
+      const draftTargets = [created[7]!, created[8]!, created[9]!];
+      const statuses = ["AWAITING_REVIEW", "APPROVED", "MANUALLY_SENT"] as const;
+      for (let i = 0; i < draftTargets.length; i++) {
+        const draft = await prisma.outreachDraft.create({
+          data: {
+            organisationId: organisation.id,
+            accountId: draftTargets[i]!.id,
+            playbookId: playbook.id,
+            language: "de",
+            subject: `Anfragenbündelung bei ${draftTargets[i]!.name} (Demo)`,
+            body: "Fiktiver Demo-Entwurf: Bezug auf drei Standorte und Angebotsprozesse. " + (playbook.requiredFooter ?? ""),
+            callToAction: "Kennenlerngespräch",
+            evidenceIds: [],
+            promptVersion: "growth-demo@1",
+            model: "mock",
+            status: statuses[i]!,
+            ...(statuses[i] === "MANUALLY_SENT"
+              ? { manuallySentAt: new Date(), manualChannel: "email", decidedAt: new Date() }
+              : {}),
+            ...(statuses[i] === "APPROVED" ? { decidedAt: new Date() } : {}),
+          },
+        });
+        await prisma.outreachDraftVersion.create({
+          data: {
+            organisationId: organisation.id,
+            draftId: draft.id,
+            version: 1,
+            subject: draft.subject,
+            body: draft.body,
+          },
+        });
+        if (i === 0) {
+          // Heavily edited draft — second version differs substantially.
+          await prisma.outreachDraftVersion.create({
+            data: {
+              organisationId: organisation.id,
+              draftId: draft.id,
+              version: 2,
+              subject: draft.subject,
+              body: "Vollständig überarbeiteter fiktiver Entwurf (menschliche Korrektur). " + (playbook.requiredFooter ?? ""),
+            },
+          });
+        }
+      }
+      console.log(`Seeded Growth demo: profile, ${created.length} fictional accounts, evidence, scores, briefs, drafts`);
+    }
+  }
+
 }
 
 main()
