@@ -544,3 +544,41 @@ export async function redactExpiredChannelPayloads(limit = 500): Promise<{
   });
   return { redacted: result.count, retentionDays };
 }
+
+/**
+ * Prospect-data retention (Growth G1). Prospect personal data must not
+ * live forever on the strength of a CSV import: contacts belonging to
+ * accounts that ended in REJECTED, SUPPRESSED or NOT_NOW are PII-redacted
+ * after OPERANTO_PROSPECT_RETENTION_DAYS (default 365). Redaction is
+ * in-place (the shell survives for dedupe and audit continuity), and
+ * suppression entries are untouched — the objection outlives the data.
+ */
+export async function redactExpiredGrowthContacts(limit = 500): Promise<{
+  redacted: number;
+}> {
+  const days = Number(process.env.OPERANTO_PROSPECT_RETENTION_DAYS ?? 365);
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const expired = await prisma.growthContact.findMany({
+    where: {
+      redactedAt: null,
+      updatedAt: { lt: cutoff },
+      account: { status: { in: ["REJECTED", "SUPPRESSED", "NOT_NOW"] } },
+    },
+    select: { id: true },
+    take: limit,
+  });
+  if (expired.length === 0) return { redacted: 0 };
+  const result = await prisma.growthContact.updateMany({
+    where: { id: { in: expired.map((row) => row.id) }, redactedAt: null },
+    data: {
+      firstName: null,
+      lastName: null,
+      email: null,
+      emailNormalized: null,
+      phone: null,
+      profileUrl: null,
+      redactedAt: new Date(),
+    },
+  });
+  return { redacted: result.count };
+}

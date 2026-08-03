@@ -83,6 +83,18 @@ model Organisation {
   channelInboundEvents     ChannelInboundEvent[]
   consents                 Consent[]
   messageTemplates         MessageTemplate[]
+  targetProfiles           TargetProfile[]
+  growthAccounts           GrowthAccount[]
+  growthContacts           GrowthContact[]
+  accountSourceRecords     AccountSourceRecord[]
+  researchRuns             ResearchRun[]
+  researchEvidence         ResearchEvidence[]
+  accountScores            AccountScore[]
+  accountBriefs            AccountBrief[]
+  outreachPlaybooks        OutreachPlaybook[]
+  outreachDrafts           OutreachDraft[]
+  outreachDraftVersions    OutreachDraftVersion[]
+  suppressionEntries       SuppressionEntry[]
 }
 
 model User {
@@ -440,6 +452,8 @@ model Task {
   id                    String       @id @default(cuid())
   organisationId        String
   opportunityId         String?
+  /// Growth prospecting: tasks raised from account review (G1, additive).
+  growthAccountId       String?
   /// Set when the task was raised from a conversation, so the work stays
   /// visible in that conversation's timeline and the customer's context.
   conversationId        String?
@@ -1023,4 +1037,387 @@ model AuditEvent {
   @@index([organisationId, occurredAt])
   @@index([organisationId, targetType, targetId])
   @@index([organisationId, correlationId])
+}
+
+
+// ── Operanto Growth Prospecting Program (G1 foundation) ─────────────
+// Account Intelligence and Assisted Outreach. Release 1 contains NO
+// sending capability of any kind: drafts end at APPROVED/MANUALLY_SENT
+// (a human copies the message out and records the fact). Prospect
+// personal data joins the privacy lifecycle from the first row.
+
+enum TargetProfileStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum GrowthAccountStatus {
+  IMPORTED
+  NEEDS_REVIEW
+  READY_FOR_RESEARCH
+  RESEARCHING
+  READY_FOR_ASSESSMENT
+  APPROVED
+  REJECTED
+  DRAFT_PREPARED
+  CONTACTED
+  REPLIED
+  QUALIFIED
+  MEETING_BOOKED
+  NOT_NOW
+  SUPPRESSED
+  CUSTOMER
+}
+
+enum EvidenceClassification {
+  VERIFIED_FACT
+  INFERENCE
+  HYPOTHESIS
+}
+
+enum ResearchRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum GrowthDraftStatus {
+  DRAFT
+  AWAITING_REVIEW
+  APPROVED
+  REJECTED
+  MANUALLY_SENT
+  CANCELLED
+}
+
+/// What kinds of companies the team wants to reach, and how to score them.
+model TargetProfile {
+  id                 String              @id @default(cuid())
+  organisationId     String
+  name               String
+  description        String?
+  industries         String[]
+  regions            String[]
+  companySizeMin     Int?
+  companySizeMax     Int?
+  characteristics    String[]
+  decisionMakerRoles String[]
+  positiveSignals    String[]
+  negativeSignals    String[]
+  exclusionCriteria  String[]
+  operantoUseCases   String[]
+  languages          String[]
+  /// Per-dimension scoring weights; deterministic calculation reads these.
+  scoringWeights     Json?
+  status             TargetProfileStatus @default(DRAFT)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  organisation Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  accounts     GrowthAccount[]
+  playbooks    OutreachPlaybook[]
+
+  @@unique([organisationId, name])
+  @@index([organisationId, status])
+}
+
+/// A prospect company. Deliberately separate from Customer: prospects are
+/// pre-relationship records; on conversion the account links to the created
+/// Customer (customerId) so history and identity carry forward without
+/// polluting the operational customer base.
+model GrowthAccount {
+  id               String              @id @default(cuid())
+  organisationId   String
+  targetProfileId  String?
+  name             String
+  nameNormalized   String
+  tradingName      String?
+  domain           String?
+  /// Normalized dedupe key; unique per organisation (NULLs permitted).
+  domainNormalized String?
+  website          String?
+  industry         String?
+  country          String?
+  region           String?
+  city             String?
+  employeeEstimate Int?
+  description      String?
+  phone            String?
+  publicEmail      String?
+  status           GrowthAccountStatus @default(IMPORTED)
+  /// Plain membership/customer references in G1; promoted to relations when
+  /// the G2/G4 UI needs includes (documented ADR decision).
+  ownerMembershipId String?
+  customerId        String?
+  lastResearchedAt  DateTime?
+  suppressedAt      DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  organisation  Organisation          @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  targetProfile TargetProfile?        @relation(fields: [targetProfileId], references: [id], onDelete: SetNull)
+  contacts      GrowthContact[]
+  sources       AccountSourceRecord[]
+  researchRuns  ResearchRun[]
+  evidence      ResearchEvidence[]
+  score         AccountScore?
+  briefs        AccountBrief[]
+  drafts        OutreachDraft[]
+
+  @@unique([organisationId, domainNormalized])
+  @@index([organisationId, status])
+  @@index([organisationId, nameNormalized])
+}
+
+/// A person at a prospect company. Personal data under GDPR from the first
+/// row: provenance, purpose and verification are recorded; erasure redacts
+/// in place; suppression survives erasure as a minimal objection record.
+model GrowthContact {
+  id                 String    @id @default(cuid())
+  organisationId     String
+  accountId          String
+  firstName          String?
+  lastName           String?
+  role               String?
+  seniority          String?
+  department         String?
+  email              String?
+  emailNormalized    String?
+  phone              String?
+  language           String?
+  profileUrl         String?
+  source             String?
+  collectedAt        DateTime  @default(now())
+  purpose            String    @default("b2b_prospecting")
+  verificationStatus String    @default("unverified")
+  confidence         Float?
+  suppressedAt       DateTime?
+  /// Set when PII was removed by erasure or the retention sweep.
+  redactedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  account      GrowthAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, accountId, emailNormalized])
+  @@index([organisationId, accountId])
+}
+
+/// Provenance for every imported/discovered account row.
+model AccountSourceRecord {
+  id                   String    @id @default(cuid())
+  organisationId       String
+  accountId            String
+  provider             String
+  providerRecordId     String?
+  sourceUrl            String?
+  importBatchId        String?
+  rawPayload           Json?
+  payloadRedactedAt    DateTime?
+  duplicateOfAccountId String?
+  importedAt           DateTime  @default(now())
+
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  account      GrowthAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, provider, providerRecordId])
+  @@index([organisationId, accountId])
+}
+
+/// One research execution against one account (provider-adapter boundary).
+model ResearchRun {
+  id                     String            @id @default(cuid())
+  organisationId         String
+  accountId              String
+  provider               String
+  status                 ResearchRunStatus @default(PENDING)
+  requestedByMembershipId String?
+  startedAt              DateTime?
+  completedAt            DateTime?
+  error                  String?
+  costCents              Int?
+  createdAt              DateTime          @default(now())
+
+  organisation Organisation       @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  account      GrowthAccount      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  evidence     ResearchEvidence[]
+
+  @@index([organisationId, accountId])
+}
+
+/// One claim with provenance. The AI must never convert an INFERENCE into a
+/// VERIFIED_FACT; classification is part of the record, not presentation.
+model ResearchEvidence {
+  id             String                 @id @default(cuid())
+  organisationId String
+  accountId      String
+  researchRunId  String?
+  category       String
+  claim          String
+  classification EvidenceClassification
+  sourceType     String
+  sourceUrl      String?
+  sourceTitle    String?
+  excerpt        String?
+  confidence     Float
+  provider       String?
+  capturedAt     DateTime               @default(now())
+  redactedAt     DateTime?
+
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  account      GrowthAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  researchRun  ResearchRun?  @relation(fields: [researchRunId], references: [id], onDelete: SetNull)
+
+  @@index([organisationId, accountId])
+}
+
+/// Current score per account; AI recommendation and human adjustment are
+/// separate fields, and overrides are audited. History lives in the audit
+/// trail, not in row proliferation.
+model AccountScore {
+  id                     String   @id @default(cuid())
+  organisationId         String
+  accountId              String   @unique
+  aiScore                Int?
+  aiComponents           Json?
+  aiExplanation          String?
+  aiModel                String?
+  aiPromptVersion        String?
+  humanScore             Int?
+  humanReason            String?
+  adjustedByMembershipId String?
+  confidence             Float?
+  missingData            String[]
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  account      GrowthAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId])
+}
+
+/// Structured, versioned account brief; every material statement cites
+/// evidence ids or is marked inference/hypothesis inside sections JSON.
+model AccountBrief {
+  id               String   @id @default(cuid())
+  organisationId   String
+  accountId        String
+  version          Int      @default(1)
+  sections         Json
+  evidenceIds      String[]
+  generatedByModel String?
+  promptVersion    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  account      GrowthAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, accountId, version])
+}
+
+/// Approved outreach content boundaries. Drafts may only use approved
+/// claims; prohibited claims are validator-enforced, not prompt-enforced.
+model OutreachPlaybook {
+  id                String   @id @default(cuid())
+  organisationId    String
+  targetProfileId   String?
+  name              String
+  language          String
+  channel           String   @default("email")
+  valuePropositions String[]
+  approvedClaims    String[]
+  prohibitedClaims  String[]
+  tone              String?
+  callToAction      String?
+  lengthGuidance    String?
+  requiredFooter    String?
+  requiresApproval  Boolean  @default(true)
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  organisation  Organisation   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  targetProfile TargetProfile? @relation(fields: [targetProfileId], references: [id], onDelete: SetNull)
+  drafts        OutreachDraft[]
+
+  @@unique([organisationId, name])
+}
+
+/// An outreach draft. Release 1 terminal states are APPROVED (copy out by a
+/// human) and MANUALLY_SENT (the human records the fact). There is no
+/// delivery path of any kind in this domain until G6 is authorised.
+model OutreachDraft {
+  id                     String            @id @default(cuid())
+  organisationId         String
+  accountId              String
+  contactId              String?
+  playbookId             String
+  language               String
+  subject                String
+  body                   String
+  callToAction           String?
+  evidenceIds            String[]
+  promptVersion          String?
+  model                  String?
+  status                 GrowthDraftStatus @default(DRAFT)
+  createdByMembershipId  String?
+  approvedByMembershipId String?
+  decidedAt              DateTime?
+  decisionReason         String?
+  manuallySentAt         DateTime?
+  manualChannel          String?
+  externalMessageRef     String?
+  redactedAt             DateTime?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  organisation Organisation          @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  account      GrowthAccount         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  playbook     OutreachPlaybook      @relation(fields: [playbookId], references: [id], onDelete: Restrict)
+  versions     OutreachDraftVersion[]
+
+  @@index([organisationId, accountId])
+  @@index([organisationId, status])
+}
+
+model OutreachDraftVersion {
+  id                   String   @id @default(cuid())
+  organisationId       String
+  draftId              String
+  version              Int
+  subject              String
+  body                 String
+  editedByMembershipId String?
+  createdAt            DateTime @default(now())
+
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  draft        OutreachDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@unique([draftId, version])
+}
+
+/// Do-not-contact record. Overrides ALL campaign logic, survives erasure as
+/// a minimal objection record, and is enforced at every future send path.
+model SuppressionEntry {
+  id                    String   @id @default(cuid())
+  organisationId        String
+  emailNormalized       String?
+  domainNormalized      String?
+  accountId             String?
+  contactId             String?
+  reason                String
+  source                String
+  createdByMembershipId String?
+  createdAt             DateTime @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, emailNormalized])
+  @@index([organisationId, domainNormalized])
 }
