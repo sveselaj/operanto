@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/rbac";
 import { scope, type OrgContext } from "@/lib/org-context";
 import { audit } from "@/lib/audit";
+import { canTransitionProfile } from "@/lib/services/growth/lifecycle";
 
 /**
  * Target Profile administration (G2). Configuration only: activating a
@@ -139,6 +140,11 @@ export async function setTargetProfileStatus(
   });
   if (!existing) throw new Error("Profile not found");
   if (existing.status === status) return existing;
+  if (!canTransitionProfile(existing.status, status)) {
+    throw new Error(
+      `Profile status cannot move ${existing.status} → ${status}`,
+    );
+  }
   const profile = await prisma.targetProfile.update({
     where: { id: existing.id },
     data: { status },

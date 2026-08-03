@@ -4,6 +4,8 @@ import {
   assertTransition,
   canTransition,
   canTransitionDraft,
+  canTransitionProfile,
+  releasePermitsTransition,
 } from "@/lib/services/growth/lifecycle";
 
 describe("growth account lifecycle", () => {
@@ -75,5 +77,38 @@ describe("growth draft lifecycle (Release 1 — no sending states)", () => {
     expect(canTransitionDraft("MANUALLY_SENT", "APPROVED")).toBe(false);
     expect(canTransitionDraft("DRAFT", "MANUALLY_SENT")).toBe(false);
     expect(canTransitionDraft("REJECTED", "MANUALLY_SENT")).toBe(false);
+  });
+});
+
+describe("G2 release boundary", () => {
+  it("permits exactly the authorized pre-research transitions", () => {
+    expect(releasePermitsTransition("IMPORTED", "NEEDS_REVIEW")).toBe(true);
+    expect(releasePermitsTransition("IMPORTED", "READY_FOR_RESEARCH")).toBe(true);
+    expect(releasePermitsTransition("NEEDS_REVIEW", "READY_FOR_RESEARCH")).toBe(true);
+    expect(releasePermitsTransition("NEEDS_REVIEW", "REJECTED")).toBe(true);
+  });
+
+  it("blocks every machine-legal move beyond the G2 boundary", () => {
+    expect(releasePermitsTransition("READY_FOR_RESEARCH", "RESEARCHING")).toBe(false);
+    expect(releasePermitsTransition("RESEARCHING", "READY_FOR_ASSESSMENT")).toBe(false);
+    expect(releasePermitsTransition("READY_FOR_ASSESSMENT", "APPROVED")).toBe(false);
+    expect(releasePermitsTransition("APPROVED", "DRAFT_PREPARED")).toBe(false);
+    expect(releasePermitsTransition("REJECTED", "READY_FOR_RESEARCH")).toBe(false);
+    expect(releasePermitsTransition("IMPORTED", "SUPPRESSED")).toBe(false);
+    expect(releasePermitsTransition("NEEDS_REVIEW", "SUPPRESSED")).toBe(false);
+  });
+});
+
+describe("target profile lifecycle machine", () => {
+  it("DRAFT→ACTIVE|ARCHIVED, ACTIVE↔PAUSED, ARCHIVED terminal", () => {
+    expect(canTransitionProfile("DRAFT", "ACTIVE")).toBe(true);
+    expect(canTransitionProfile("DRAFT", "ARCHIVED")).toBe(true);
+    expect(canTransitionProfile("DRAFT", "PAUSED")).toBe(false);
+    expect(canTransitionProfile("ACTIVE", "PAUSED")).toBe(true);
+    expect(canTransitionProfile("ACTIVE", "ARCHIVED")).toBe(true);
+    expect(canTransitionProfile("PAUSED", "ACTIVE")).toBe(true);
+    expect(canTransitionProfile("PAUSED", "ARCHIVED")).toBe(true);
+    expect(canTransitionProfile("ARCHIVED", "DRAFT")).toBe(false);
+    expect(canTransitionProfile("ARCHIVED", "ACTIVE")).toBe(false);
   });
 });

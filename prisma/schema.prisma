@@ -1124,6 +1124,7 @@ model TargetProfile {
   organisation Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   accounts     GrowthAccount[]
   playbooks    OutreachPlaybook[]
+  imports      GrowthImport[]
 
   @@unique([organisationId, name])
   @@index([organisationId, status])
@@ -1432,6 +1433,7 @@ model SuppressionEntry {
 
 enum GrowthImportStatus {
   PREVIEWED
+  COMMITTING
   COMMITTED
   FAILED
 }
@@ -1445,6 +1447,8 @@ model GrowthImport {
   id                    String             @id @default(cuid())
   organisationId        String
   createdByMembershipId String?
+  /// Bound at preview; commit uses THIS value, never a client field.
+  targetProfileId       String?
   filename              String
   checksum              String
   delimiter             String
@@ -1459,7 +1463,8 @@ model GrowthImport {
   createdAt             DateTime           @default(now())
   completedAt           DateTime?
 
-  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  organisation  Organisation   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  targetProfile TargetProfile? @relation(fields: [targetProfileId], references: [id], onDelete: SetNull)
 
   @@index([organisationId, createdAt])
 }

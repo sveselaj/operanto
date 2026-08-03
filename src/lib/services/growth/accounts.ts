@@ -5,7 +5,11 @@ import { requirePermission } from "@/lib/rbac";
 import { scope, type OrgContext } from "@/lib/org-context";
 import { audit } from "@/lib/audit";
 import { normalizeEmail } from "@/lib/normalize";
-import { assertTransition } from "@/lib/services/growth/lifecycle";
+import {
+  assertTransition,
+  ReleaseBoundaryError,
+  releasePermitsTransition,
+} from "@/lib/services/growth/lifecycle";
 import {
   normalizeCompanyName,
   normalizeDomain,
@@ -144,13 +148,19 @@ export async function transitionGrowthAccount(
     where: { ...scope(ctx), id: accountId },
   });
   if (!account) throw new Error("Account not found");
+  if (to === "SUPPRESSED") {
+    throw new Error("Suppression goes through the dedicated suppression service");
+  }
   assertTransition(account.status, to);
+  // Release boundary: the G1 machine describes the whole program; G2 only
+  // operates its pre-research subset. A crafted request cannot walk an
+  // account into RESEARCHING or beyond.
+  if (!releasePermitsTransition(account.status, to)) {
+    throw new ReleaseBoundaryError(account.status, to);
+  }
   await prisma.growthAccount.update({
     where: { id: account.id },
-    data: {
-      status: to,
-      ...(to === "SUPPRESSED" ? { suppressedAt: new Date() } : {}),
-    },
+    data: { status: to },
   });
   await audit(ctx, {
     eventType: "growth.account_status_changed",

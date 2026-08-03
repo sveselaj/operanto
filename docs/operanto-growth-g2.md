@@ -36,13 +36,21 @@ only).
 
 ## CSV import
 
-Staged and stateless: **Upload → Parse → Preview → Map → Validate →
-Duplicates → Confirm → Commit → Results.** The raw file never reaches the
-server's storage — the text travels with each request, preview writes no
-domain rows (only the `GrowthImport` operational record: filename,
-checksum, delimiter, mapping, counts, content-free report), and commit
-re-parses deterministically, refuses if the checksum changed, and runs in
-one transaction. Re-committing a committed import refuses.
+Staged and stateless: **Upload → Parse → Preview (binds profile +
+mapping) → Map → Validate → Duplicates → Confirm → Commit → Results.**
+The raw file never reaches the server's storage. Preview requires an
+**ACTIVE target profile of the current organisation** and binds it, with
+the column mapping, to the `GrowthImport` record; commit executes the
+STORED configuration only — client-echoed mappings are verified against
+the stored canonical form and any mismatch refuses with zero writes;
+the target profile is never read from the client at commit and must still
+be ACTIVE. Commit is **atomically claimable** (`PREVIEWED → COMMITTING`
+compare-and-set): exactly one concurrent commit succeeds, the loser gets
+a controlled already-committed error with no duplicate audit or
+provenance; a failed commit transaction marks the import FAILED
+(audited, content-free) and requires a fresh preview. Imported accounts
+receive the bound `targetProfileId`; linked duplicates never have theirs
+changed.
 
 Parsing: UTF-8, comma/semicolon auto-detected, RFC-4180 quoting, BOM/CRLF
 handled. Limits: 2 MB, 2000 rows, 60 columns, 2000-char cells; null bytes,
@@ -65,32 +73,46 @@ overwritten; e-mails via the existing normalizer; countries upper-cased.
 Conservative and explainable. Exact: normalized domain (constraint-backed),
 existing contact e-mail. Possible: normalized name + country, or + city.
 In-file: repeated domain inside the upload. Nothing is ever merged
-automatically; resolutions are per-row human decisions — **skip** (default),
-**import as new** (blocked for exact domain duplicates, which the
-constraint would refuse), **link to existing** (adds provenance and the
-contact; changes nothing on the account — silent overwrite is
-structurally impossible). Duplicate decisions are audited
-(`growth.duplicate_detected`, counts on commit).
+automatically. **Resolutions are validated server-side**: every entry
+must reference a detected duplicate row; `link:` targets must exactly
+equal the detected candidate's account id (arbitrary same-organisation
+targets refuse); exact-domain duplicates cannot be "imported as new";
+malformed values refuse — all pre-claim, so validation failures leave the
+import re-committable. Linking adds provenance and the contact only —
+tests prove the target account's fields, `targetProfileId` and
+`updatedAt` are untouched.
 
-## Account lifecycle (G2 exposure)
+## Account lifecycle (G2 exposure — server-enforced release boundary)
 
-G1's machine, pre-research segment only: `IMPORTED` (incomplete) /
-`NEEDS_REVIEW` (complete imports) → `READY_FOR_RESEARCH` / `REJECTED`, and
-`SUPPRESSED` from anywhere via the explicit suppress action. `APPROVED`
-and later states exist in the schema but are unreachable in G2 — they
-require research (G3+). All transitions server-validated by the machine,
-audited, and mirrored as account-timeline Activity events.
+Two layers of enforcement. The G1 machine validates structural legality;
+a **release boundary** (`releasePermitsTransition`) additionally restricts
+the ordinary transition service to exactly the authorized pre-research
+set: `IMPORTED → NEEDS_REVIEW | READY_FOR_RESEARCH` and `NEEDS_REVIEW →
+READY_FOR_RESEARCH | REJECTED`. Suppression is not an ordinary transition
+— it goes only through the dedicated suppression service. A crafted
+server request cannot reach `RESEARCHING`, `READY_FOR_ASSESSMENT`,
+`APPROVED` or anything later (integration-tested, including a row seeded
+mid-pipeline that the service still refuses to advance). All permitted
+transitions are audited and mirrored as account-timeline Activities.
+
+## Target-profile lifecycle (server-enforced)
+
+`DRAFT → ACTIVE | ARCHIVED` · `ACTIVE → PAUSED | ARCHIVED` · `PAUSED →
+ACTIVE | ARCHIVED` · **`ARCHIVED` is terminal** — no rule authorizes
+reopening. The UI renders exactly the server machine's options.
 
 ## Suppression invariant (holds before any send path exists)
 
-Suppressed accounts/contacts are visibly badged. Imports cannot
-reactivate: an erased contact's e-mail (tombstone) is **not recreated** by
-re-import (policy: erased people do not return via CSV); an ordinarily
-suppressed e-mail imports the contact pre-marked suppressed; a suppressed
-domain imports its account directly into `SUPPRESSED`. Editing an
-account's domain onto a suppressed domain re-applies suppression rather
-than bypassing it. Consent is never inferred — imported contacts are not
-sendable by existence, and no sending exists in Release 1 at all.
+Suppressed accounts/contacts are visibly badged. **Contact and domain
+suppression are evaluated independently**: a suppressed domain ALWAYS
+imports its account directly into `SUPPRESSED` — even when the row's
+contact e-mail is also suppressed or erased (combined case
+integration-tested). Contact rules are separate: an erasure tombstone
+means the person is never recreated (the account itself still imports —
+the company is not the person); an ordinarily suppressed e-mail imports
+the contact pre-marked. Editing an account's domain onto a suppressed
+domain re-applies suppression rather than bypassing it. Consent is never
+inferred; no sending exists in Release 1 at all.
 
 ## Permissions
 
@@ -126,8 +148,14 @@ companies, routable domains, or staging/production seeding.
 
 ## Tests
 
-Unit 198 (CSV parse/limits/injection/mapping/validation, normalizers,
-lifecycle, flag policy) · integration 123 on real PostgreSQL (profiles
+Unit 201 (CSV parse/limits/injection/mapping/validation, normalizers,
+full lifecycle machine + G2 release boundary + profile machine, flag
+policy) · integration 125 on real PostgreSQL (amendment adds: release-boundary
+violation attempts incl. mid-pipeline seeding; ACTIVE-profile binding
+with cross-tenant refusal; mapping-mismatch commits writing zero rows;
+server-side resolution validation incl. arbitrary link targets; combined
+contact+domain suppression; tombstone-alone account import; concurrent
+commit racing the atomic claim) (profiles
 CRUD + cross-tenant + permissions; preview-writes-nothing; explicit
 partial; exact/possible/in-file duplicates with resolutions;
 link-never-overwrites; tombstone-not-recreated; suppressed-domain import;

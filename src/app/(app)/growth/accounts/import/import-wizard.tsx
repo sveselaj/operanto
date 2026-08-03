@@ -18,7 +18,12 @@ import { ACCOUNT_FIELDS } from "@/lib/services/growth/csv";
  * Nothing is written until the user confirms the commit step.
  */
 
-export function ImportWizard() {
+export function ImportWizard({
+  activeProfiles,
+}: {
+  activeProfiles: { id: string; name: string }[];
+}) {
+  const [targetProfileId, setTargetProfileId] = useState(activeProfiles[0]?.id ?? "");
   const [fileText, setFileText] = useState<string | null>(null);
   const [filename, setFilename] = useState("import.csv");
   const [mappingDraft, setMappingDraft] = useState<Record<string, string> | null>(null);
@@ -72,7 +77,31 @@ export function ImportWizard() {
   return (
     <div className="max-w-3xl space-y-5">
       <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-2 text-sm font-semibold">1 · Choose file</h2>
+        <h2 className="mb-2 text-sm font-semibold">1 · Target profile and file</h2>
+        {activeProfiles.length === 0 ? (
+          <p className="mb-2 text-sm text-danger">
+            Imports require an ACTIVE target profile. Create and activate one
+            first.
+          </p>
+        ) : (
+          <div className="mb-3">
+            <label className="mb-1 block text-xs font-medium" htmlFor="import-profile">
+              Target profile (bound at preview; commit uses the same profile)
+            </label>
+            <select
+              id="import-profile"
+              value={targetProfileId}
+              onChange={(event) => setTargetProfileId(event.target.value)}
+              className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+            >
+              {activeProfiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <input
           ref={fileRef}
           type="file"
@@ -94,7 +123,8 @@ export function ImportWizard() {
             <input type="hidden" name="filename" value={filename} />
             <input type="hidden" name="text" value={fileText} />
             <input type="hidden" name="mapping" value={mapping ? JSON.stringify(mapping) : ""} />
-            <Button type="submit" variant="outline" size="sm" disabled={previewPending}>
+            <input type="hidden" name="targetProfileId" value={targetProfileId} />
+            <Button type="submit" variant="outline" size="sm" disabled={previewPending || !targetProfileId}>
               {previewPending ? "Analysing…" : preview ? "Re-run preview" : "Preview file"}
             </Button>
             {previewState && !previewState.ok ? (
@@ -232,11 +262,18 @@ export function ImportWizard() {
                     {preview.suppressedRows.map((row) => (
                       <li key={row.rowNumber}>
                         Row {row.rowNumber}:{" "}
-                        {row.code === "contact_erased_tombstone"
-                          ? "contact was erased — will NOT be recreated"
-                          : row.code === "contact_suppressed"
-                            ? "contact is suppressed — imported as suppressed, never sendable"
-                            : "domain is suppressed — account imports directly as suppressed"}
+                        {[
+                          row.domainCode
+                            ? "domain suppressed — account imports directly as suppressed"
+                            : null,
+                          row.contactCode === "contact_erased_tombstone"
+                            ? "contact was erased — the person will NOT be recreated"
+                            : row.contactCode === "contact_suppressed"
+                              ? "contact suppressed — imported pre-marked, never sendable"
+                              : null,
+                        ]
+                          .filter(Boolean)
+                          .join("; ")}
                       </li>
                     ))}
                   </ul>
@@ -258,7 +295,7 @@ export function ImportWizard() {
             <input type="hidden" name="resolutions" value={JSON.stringify(resolutions)} />
             <input type="hidden" name="acceptPartial" value={acceptPartial ? "true" : "false"} />
             <p className="text-xs text-muted-foreground">
-              {preview.validRows.length} rows import as new accounts;{" "}
+              Profile: {preview.targetProfileName}. {preview.validRows.length} rows import as new accounts;{" "}
               {preview.duplicates.length} duplicates follow your resolutions
               (default skip); invalid rows are never imported.
             </p>

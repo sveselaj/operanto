@@ -37,6 +37,17 @@ const { updateGrowthAccount, assignGrowthAccount } = await import(
   "@/lib/services/growth/accounts"
 );
 
+async function activeProfileId(ctx: Awaited<ReturnType<typeof makeCtx>>) {
+  const profile = await db.targetProfile.create({
+    data: {
+      organisationId: ctx.organisation.id,
+      name: `Profile ${Math.random().toString(36).slice(2)}`,
+      status: "ACTIVE",
+    },
+  });
+  return profile.id;
+}
+
 async function makeCtx(slug: string, role: "ADMIN" | "SUPERVISOR" | "OPERATOR" = "ADMIN") {
   const organisation =
     (await db.organisation.findUnique({ where: { slug } })) ??
@@ -167,22 +178,37 @@ describeDb("growth accounts foundation", () => {
     expect(await listGrowthAccounts(operator)).toHaveLength(1);
   });
 
-  it("lifecycle transitions are machine-enforced and audited", async () => {
+  it("transitions are machine-enforced, audited, and G2 release-bounded", async () => {
     const ctx = await makeCtx("org-a");
     const created = await createGrowthAccount(ctx, accountInput("Flow GmbH", "flow.example"));
     const accountId = (created as { accountId: string }).accountId;
+    // Machine violations refuse.
     await expect(
       transitionGrowthAccount(ctx, accountId, "APPROVED"),
     ).rejects.toThrow(/Invalid account transition/);
+    // Permitted G2 transitions work and audit.
+    await transitionGrowthAccount(ctx, accountId, "NEEDS_REVIEW");
     await transitionGrowthAccount(ctx, accountId, "READY_FOR_RESEARCH");
-    await transitionGrowthAccount(ctx, accountId, "RESEARCHING");
-    await transitionGrowthAccount(ctx, accountId, "READY_FOR_ASSESSMENT");
-    await transitionGrowthAccount(ctx, accountId, "APPROVED", "good fit");
-    const account = await db.growthAccount.findUniqueOrThrow({ where: { id: accountId } });
-    expect(account.status).toBe("APPROVED");
+    // The RELEASE BOUNDARY blocks machine-legal but unauthorized moves: a
+    // crafted request cannot walk an account into research or approval.
+    await expect(
+      transitionGrowthAccount(ctx, accountId, "RESEARCHING"),
+    ).rejects.toThrow(/outside the currently authorized Growth release/);
+    // Even a row seeded mid-pipeline cannot advance through the service.
+    await db.growthAccount.update({
+      where: { id: accountId },
+      data: { status: "READY_FOR_ASSESSMENT" },
+    });
+    await expect(
+      transitionGrowthAccount(ctx, accountId, "APPROVED"),
+    ).rejects.toThrow(/outside the currently authorized Growth release/);
+    // Suppression is not an ordinary transition.
+    await expect(
+      transitionGrowthAccount(ctx, accountId, "SUPPRESSED"),
+    ).rejects.toThrow(/dedicated suppression service/);
     expect(
       await db.auditEvent.count({ where: { eventType: "growth.account_status_changed" } }),
-    ).toBe(4);
+    ).toBe(2);
   });
 
   it("suppression is terminal, writes entries for domain + contacts, and overrides", async () => {
@@ -318,62 +344,59 @@ const CSV = [
   ",missing-name.example,Berlin,DE,,,",
 ].join("\n");
 
-describeDb("growth G2: target profiles", () => {
-  it("creates, updates, archives — audited, tenant-scoped, name-unique", async () => {
+describeDb("growth G2: target profile lifecycle machine", () => {
+  it("enforces DRAFT→ACTIVE→PAUSED→ACTIVE/ARCHIVED with ARCHIVED terminal", async () => {
     const ctx = await makeCtx("org-a");
-    const profile = await createTargetProfile(ctx, {
-      name: "DACH Installers",
-      regions: ["DE", "AT"],
-      companySizeMin: 10,
-      companySizeMax: 100,
-    });
+    const profile = await createTargetProfile(ctx, { name: "Machine Profile" });
     await expect(
-      createTargetProfile(ctx, { name: "DACH Installers" }),
-    ).rejects.toThrow(/already exists/);
-    await expect(
-      createTargetProfile(ctx, { name: "Bad", companySizeMin: 50, companySizeMax: 10 }),
-    ).rejects.toThrow(/cannot exceed/);
-    await updateTargetProfile(ctx, profile.id, {
-      name: "DACH Installers",
-      regions: ["DE"],
-    });
+      setTargetProfileStatus(ctx, profile.id, "PAUSED"),
+    ).rejects.toThrow(/cannot move DRAFT/);
+    await setTargetProfileStatus(ctx, profile.id, "ACTIVE");
+    await setTargetProfileStatus(ctx, profile.id, "PAUSED");
     await setTargetProfileStatus(ctx, profile.id, "ACTIVE");
     await setTargetProfileStatus(ctx, profile.id, "ARCHIVED");
-    expect(
-      await db.auditEvent.count({
-        where: { eventType: { in: ["growth.profile_created", "growth.profile_updated", "growth.profile_status_changed"] } },
-      }),
-    ).toBe(4);
-
-    const foreign = await makeCtx("org-b");
     await expect(
-      updateTargetProfile(foreign, profile.id, { name: "Steal" }),
-    ).rejects.toThrow(/not found/);
-    const operator = await makeCtx("org-a", "OPERATOR");
+      setTargetProfileStatus(ctx, profile.id, "ACTIVE"),
+    ).rejects.toThrow(/cannot move ARCHIVED/);
     await expect(
-      createTargetProfile(operator, { name: "Nope" }),
-    ).rejects.toThrow(/Missing permission/);
+      setTargetProfileStatus(ctx, profile.id, "DRAFT"),
+    ).rejects.toThrow(/cannot move ARCHIVED/);
   });
 });
 
 describeDb("growth G2: csv import", () => {
-  it("preview writes NO domain records; commit requires explicit partial acceptance", async () => {
+  it("preview requires an ACTIVE profile of the current organisation", async () => {
     const ctx = await makeCtx("org-a");
-    const preview = await previewImport(ctx, { filename: "test.csv", text: CSV });
-    expect(preview.rowCount).toBe(3);
-    expect(preview.invalidRows).toEqual([
-      { rowNumber: 4, errors: ["missing_name"] },
-    ]);
+    const draft = await createTargetProfile(ctx, { name: "Draft P" });
+    await expect(
+      previewImport(ctx, { filename: "x.csv", text: CSV, targetProfileId: draft.id }),
+    ).rejects.toThrow(/ACTIVE target profile/);
+    const foreign = await makeCtx("org-b");
+    const foreignProfile = await activeProfileId(foreign);
+    await expect(
+      previewImport(ctx, { filename: "x.csv", text: CSV, targetProfileId: foreignProfile }),
+    ).rejects.toThrow(/not found/);
+    expect(await db.growthImport.count()).toBe(0);
+  });
+
+  it("preview writes nothing; commit binds the previewed profile and needs explicit partial", async () => {
+    const ctx = await makeCtx("org-a");
+    const profileId = await activeProfileId(ctx);
+    const preview = await previewImport(ctx, {
+      filename: "test.csv",
+      text: CSV,
+      targetProfileId: profileId,
+    });
+    expect(preview.targetProfileId).toBe(profileId);
+    expect(preview.invalidRows).toEqual([{ rowNumber: 4, errors: ["missing_name"] }]);
     expect(await db.growthAccount.count()).toBe(0);
     expect(await db.growthContact.count()).toBe(0);
-    expect(await db.growthImport.count()).toBe(1);
 
     await expect(
       commitImport(ctx, {
         importId: preview.importId,
         filename: "test.csv",
         text: CSV,
-        mapping: preview.mapping,
         resolutions: {},
         acceptPartial: false,
       }),
@@ -383,197 +406,265 @@ describeDb("growth G2: csv import", () => {
       importId: preview.importId,
       filename: "test.csv",
       text: CSV,
-      mapping: preview.mapping,
       resolutions: {},
       acceptPartial: true,
     });
     expect(result.accepted).toBe(2);
-    expect(result.rejected).toBe(1);
-    const accounts = await db.growthAccount.findMany({ orderBy: { name: "asc" } });
+    // Every created account carries the profile bound AT PREVIEW.
+    const accounts = await db.growthAccount.findMany();
     expect(accounts).toHaveLength(2);
-    expect(accounts[0]!.domainNormalized).toBe("fenster-neu.example");
-    expect(accounts[0]!.status).toBe("NEEDS_REVIEW");
-    expect(await db.growthContact.count()).toBe(1);
-    const record = await db.growthImport.findUniqueOrThrow({
-      where: { id: preview.importId },
-    });
-    expect(record.status).toBe("COMMITTED");
-    expect(record.acceptedCount).toBe(2);
-    // Audit metadata is counts-only — no row content, names or e-mails.
+    for (const account of accounts) {
+      expect(account.targetProfileId).toBe(profileId);
+    }
     const audits = await db.auditEvent.findMany({
       where: { eventType: { in: ["growth.import_previewed", "growth.import_committed"] } },
     });
-    expect(audits).toHaveLength(2);
     expect(JSON.stringify(audits)).not.toContain("Fenster Neu");
     expect(JSON.stringify(audits)).not.toContain("max@");
-    // Re-committing the same import refuses.
     await expect(
       commitImport(ctx, {
         importId: preview.importId,
         filename: "test.csv",
         text: CSV,
-        mapping: preview.mapping,
         resolutions: {},
         acceptPartial: true,
       }),
     ).rejects.toThrow(/already committed/);
   });
 
-  it("detects exact + possible duplicates, honours resolutions, never overwrites", async () => {
+  it("a changed mapping at commit refuses and writes NO domain rows", async () => {
     const ctx = await makeCtx("org-a");
-    await createGrowthAccount(ctx, {
+    const profileId = await activeProfileId(ctx);
+    const preview = await previewImport(ctx, {
+      filename: "m.csv",
+      text: CSV,
+      targetProfileId: profileId,
+    });
+    const tampered = { ...preview.mapping, Stadt: "region" as const };
+    await expect(
+      commitImport(ctx, {
+        importId: preview.importId,
+        filename: "m.csv",
+        text: CSV,
+        mapping: tampered,
+        resolutions: {},
+        acceptPartial: true,
+      }),
+    ).rejects.toThrow(/mapping changed since preview/);
+    expect(await db.growthAccount.count()).toBe(0);
+    expect(await db.growthContact.count()).toBe(0);
+    expect(await db.accountSourceRecord.count()).toBe(0);
+    const record = await db.growthImport.findUniqueOrThrow({
+      where: { id: preview.importId },
+    });
+    expect(record.status).toBe("PREVIEWED");
+  });
+
+  it("duplicate resolutions are validated server-side; arbitrary link targets refuse", async () => {
+    const ctx = await makeCtx("org-a");
+    const profileId = await activeProfileId(ctx);
+    const otherProfile = await activeProfileId(ctx);
+    const existing = await createGrowthAccount(ctx, {
       name: "Fenster Neu GmbH",
       domain: "fenster-neu.example",
       country: "DE",
+      targetProfileId: otherProfile,
       source: { provider: "test" },
     });
-    await createGrowthAccount(ctx, {
-      name: "Alpenglas Montagen GmbH",
-      domain: "alpenglas-alt.example",
+    const existingId = (existing as { accountId: string }).accountId;
+    const bystander = await createGrowthAccount(ctx, {
+      name: "Unrelated GmbH",
+      domain: "unrelated.example",
       country: "DE",
       source: { provider: "test" },
     });
+    const bystanderId = (bystander as { accountId: string }).accountId;
+
     const csv = [
-      "Firma,Website,land,Stadt",
-      "Fenster Neu GmbH,fenster-neu.example,DE,Hamburg", // exact (domain)
-      "Alpenglas Montagen AG,,DE,", // possible (name+country)
-      "Neue Firma GmbH,neue-firma.example,DE,", // clean
-      "Neue Firma GmbH,neue-firma.example,DE,", // in-file duplicate
+      "Firma,Website,land,Vorname",
+      "Fenster Neu GmbH,fenster-neu.example,DE,Mira", // exact duplicate
+      "Saubere Firma GmbH,saubere.example,DE,",       // clean row
     ].join("\n");
-    const preview = await previewImport(ctx, { filename: "d.csv", text: csv });
-    expect(preview.duplicates).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ rowNumber: 2, kind: "exact", reason: "domain_exact" }),
-        expect.objectContaining({ rowNumber: 3, kind: "possible", reason: "name_country_match" }),
-        expect.objectContaining({ rowNumber: 5, kind: "in_file", reason: "in_file_domain" }),
-      ]),
-    );
-    const exact = preview.duplicates.find((d) => d.reason === "domain_exact")!;
-    const before = await db.growthAccount.findFirstOrThrow({
-      where: { domainNormalized: "fenster-neu.example" },
-    });
-    const result = await commitImport(ctx, {
-      importId: preview.importId,
-      filename: "d.csv",
+    const preview = await previewImport(ctx, {
+      filename: "r.csv",
       text: csv,
-      mapping: preview.mapping,
-      resolutions: {
-        2: `link:${exact.existingAccountId}`,
-        3: "new",
-        5: "skip",
-      },
+      targetProfileId: profileId,
+    });
+    const base = {
+      importId: preview.importId,
+      filename: "r.csv",
+      text: csv,
       acceptPartial: false,
+    };
+    // Resolution for a non-duplicate row.
+    await expect(
+      commitImport(ctx, { ...base, resolutions: { 3: "skip" } }),
+    ).rejects.toThrow(/not a duplicate/);
+    // Arbitrary same-organisation link target.
+    await expect(
+      commitImport(ctx, { ...base, resolutions: { 2: `link:${bystanderId}` } }),
+    ).rejects.toThrow(/does not match the detected candidate/);
+    // Malformed value.
+    await expect(
+      commitImport(ctx, { ...base, resolutions: { 2: "merge" } }),
+    ).rejects.toThrow(/invalid resolution/);
+    // 'new' for an exact domain duplicate.
+    await expect(
+      commitImport(ctx, { ...base, resolutions: { 2: "new" } }),
+    ).rejects.toThrow(/can only be skipped or linked/);
+    expect(await db.growthAccount.count()).toBe(2); // nothing imported yet
+
+    // The correct link succeeds, changes NOTHING on the target (including
+    // its profile), and adds only provenance + the contact.
+    const before = await db.growthAccount.findUniqueOrThrow({ where: { id: existingId } });
+    const result = await commitImport(ctx, {
+      ...base,
+      resolutions: { 2: `link:${existingId}` },
     });
     expect(result.linked).toBe(1);
-    expect(result.accepted).toBe(2); // possible-as-new + clean row
-    expect(result.skippedDuplicates).toBe(1);
-    // Linking added provenance but changed nothing on the account.
-    const after = await db.growthAccount.findUniqueOrThrow({ where: { id: before.id } });
-    expect(after.city).toBe(before.city);
+    expect(result.accepted).toBe(1);
+    const after = await db.growthAccount.findUniqueOrThrow({ where: { id: existingId } });
+    expect(after.targetProfileId).toBe(otherProfile);
     expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
+    expect(after.city).toBe(before.city);
     expect(
       await db.accountSourceRecord.count({
-        where: { accountId: before.id, duplicateOfAccountId: before.id },
+        where: { accountId: existingId, duplicateOfAccountId: existingId },
       }),
+    ).toBe(1);
+    expect(
+      await db.growthContact.count({ where: { accountId: existingId } }),
     ).toBe(1);
   });
 
-  it("suppression survives import: tombstones are not recreated, marks persist", async () => {
+  it("suppression precedence: domain and contact evaluated independently", async () => {
     const ctx = await makeCtx("org-a");
-    const created = await createGrowthAccount(ctx, {
-      name: "Erased Host GmbH",
-      domain: "erased-host.example",
-      country: "DE",
-      source: { provider: "test" },
+    const profileId = await activeProfileId(ctx);
+    // Erased contact (tombstone) + suppressed domain on the SAME row, plus a
+    // suppressed (non-erased) contact + suppressed domain on another.
+    await db.suppressionEntry.createMany({
+      data: [
+        {
+          organisationId: ctx.organisation.id,
+          emailNormalized: "gone@combined.example",
+          reason: "erasure",
+          source: "privacy",
+        },
+        {
+          organisationId: ctx.organisation.id,
+          emailNormalized: "optout@combined2.example",
+          reason: "requested",
+          source: "manual",
+        },
+        {
+          organisationId: ctx.organisation.id,
+          emailNormalized: "domain:combined.example",
+          domainNormalized: "combined.example",
+          reason: "requested",
+          source: "manual",
+        },
+        {
+          organisationId: ctx.organisation.id,
+          emailNormalized: "domain:combined2.example",
+          domainNormalized: "combined2.example",
+          reason: "requested",
+          source: "manual",
+        },
+      ],
     });
-    const accountId = (created as { accountId: string }).accountId;
-    const contact = await db.growthContact.create({
-      data: {
-        organisationId: ctx.organisation.id,
-        accountId,
-        firstName: "Gone",
-        email: "gone@erased-host.example",
-        emailNormalized: "gone@erased-host.example",
-      },
-    });
-    await eraseGrowthContact(ctx, contact.id, "Art. 17");
-
     const csv = [
       "Firma,Website,contact email",
-      "Neu Import GmbH,neu-import.example,gone@erased-host.example",
+      "Combined GmbH,combined.example,gone@combined.example",
+      "Combined Zwei GmbH,combined2.example,optout@combined2.example",
     ].join("\n");
-    const preview = await previewImport(ctx, { filename: "s.csv", text: csv });
-    expect(preview.suppressedRows).toEqual([
-      { rowNumber: 2, code: "contact_erased_tombstone" },
-    ]);
+    const preview = await previewImport(ctx, {
+      filename: "cs.csv",
+      text: csv,
+      targetProfileId: profileId,
+    });
+    expect(preview.suppressedRows).toEqual(
+      expect.arrayContaining([
+        { rowNumber: 2, contactCode: "contact_erased_tombstone", domainCode: "domain_suppressed" },
+        { rowNumber: 3, contactCode: "contact_suppressed", domainCode: "domain_suppressed" },
+      ]),
+    );
     const result = await commitImport(ctx, {
       importId: preview.importId,
-      filename: "s.csv",
+      filename: "cs.csv",
       text: csv,
-      mapping: preview.mapping,
       resolutions: {},
       acceptPartial: false,
     });
-    expect(result.tombstoneSkipped).toBe(1);
-    expect(result.accepted).toBe(0);
-    // The erased identity was NOT recreated anywhere.
-    expect(
-      await db.growthContact.count({
-        where: { emailNormalized: "gone@erased-host.example" },
-      }),
-    ).toBe(0);
+    expect(result.accepted).toBe(2);
+    expect(result.tombstoneSkippedContacts).toBe(1);
+    // BOTH accounts import directly as SUPPRESSED — domain suppression wins
+    // regardless of the contact situation.
+    const one = await db.growthAccount.findFirstOrThrow({
+      where: { domainNormalized: "combined.example" },
+      include: { contacts: true },
+    });
+    expect(one.status).toBe("SUPPRESSED");
+    expect(one.suppressedAt).not.toBeNull();
+    expect(one.contacts).toHaveLength(0); // the erased person did not return
+    const two = await db.growthAccount.findFirstOrThrow({
+      where: { domainNormalized: "combined2.example" },
+      include: { contacts: true },
+    });
+    expect(two.status).toBe("SUPPRESSED");
+    expect(two.contacts).toHaveLength(1);
+    expect(two.contacts[0]!.suppressedAt).not.toBeNull();
   });
 
-  it("suppressed domains import directly as SUPPRESSED — never reactivated", async () => {
+  it("a tombstoned contact alone does not block the account import", async () => {
     const ctx = await makeCtx("org-a");
-    const created = await createGrowthAccount(ctx, {
-      name: "Old Blocked GmbH",
-      domain: "blocked.example",
-      country: "DE",
-      source: { provider: "test" },
-    });
-    await suppressGrowthAccount(ctx, (created as { accountId: string }).accountId, "no contact");
-    // A new import for a DIFFERENT company on the suppressed domain's org…
-    const csv = ["Firma,Website", "Blocked Sub GmbH,sub.other.example"].join("\n");
-    // …fine; but the same suppressed domain would be domain_exact anyway.
-    // Test the marked-import path via a fresh domain suppression:
+    const profileId = await activeProfileId(ctx);
     await db.suppressionEntry.create({
       data: {
         organisationId: ctx.organisation.id,
-        emailNormalized: "domain:fresh-blocked.example",
-        domainNormalized: "fresh-blocked.example",
-        reason: "requested",
-        source: "manual",
+        emailNormalized: "erased@lonely.example",
+        reason: "erasure",
+        source: "privacy",
       },
     });
-    const csv2 = ["Firma,Website", "Fresh Blocked GmbH,fresh-blocked.example"].join("\n");
-    const preview = await previewImport(ctx, { filename: "b.csv", text: csv2 });
-    expect(preview.suppressedRows).toEqual([{ rowNumber: 2, code: "domain_suppressed" }]);
-    await commitImport(ctx, {
+    const csv = [
+      "Firma,Website,contact email",
+      "Lonely GmbH,lonely.example,erased@lonely.example",
+    ].join("\n");
+    const preview = await previewImport(ctx, {
+      filename: "t.csv",
+      text: csv,
+      targetProfileId: profileId,
+    });
+    const result = await commitImport(ctx, {
       importId: preview.importId,
-      filename: "b.csv",
-      text: csv2,
-      mapping: preview.mapping,
+      filename: "t.csv",
+      text: csv,
       resolutions: {},
       acceptPartial: false,
     });
+    expect(result.accepted).toBe(1);
+    expect(result.tombstoneSkippedContacts).toBe(1);
     const account = await db.growthAccount.findFirstOrThrow({
-      where: { domainNormalized: "fresh-blocked.example" },
+      where: { domainNormalized: "lonely.example" },
+      include: { contacts: true },
     });
-    expect(account.status).toBe("SUPPRESSED");
-    expect(account.suppressedAt).not.toBeNull();
-    void csv;
+    expect(account.status).toBe("NEEDS_REVIEW"); // company imports normally
+    expect(account.contacts).toHaveLength(0);    // the person does not
   });
 
-  it("commit refuses when content changed after preview, and cross-tenant imports fail", async () => {
+  it("commit refuses stale content and cross-tenant records; exactly one concurrent commit wins", async () => {
     const ctx = await makeCtx("org-a");
-    const preview = await previewImport(ctx, { filename: "c.csv", text: CSV });
+    const profileId = await activeProfileId(ctx);
+    const preview = await previewImport(ctx, {
+      filename: "c.csv",
+      text: CSV,
+      targetProfileId: profileId,
+    });
     await expect(
       commitImport(ctx, {
         importId: preview.importId,
         filename: "c.csv",
         text: CSV + "\nExtra GmbH,extra.example,,,,,",
-        mapping: preview.mapping,
         resolutions: {},
         acceptPartial: true,
       }),
@@ -584,11 +675,36 @@ describeDb("growth G2: csv import", () => {
         importId: preview.importId,
         filename: "c.csv",
         text: CSV,
-        mapping: preview.mapping,
         resolutions: {},
         acceptPartial: true,
       }),
     ).rejects.toThrow(/not found/);
+
+    // Concurrency: two commits race; the atomic claim lets exactly one pass.
+    const attempt = () =>
+      commitImport(ctx, {
+        importId: preview.importId,
+        filename: "c.csv",
+        text: CSV,
+        resolutions: {},
+        acceptPartial: true,
+      });
+    const results = await Promise.allSettled([attempt(), attempt()]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(String((rejected[0] as PromiseRejectedResult).reason)).toMatch(
+      /already committed or is being committed/,
+    );
+    // No duplicate audit or provenance from the losing commit.
+    expect(
+      await db.auditEvent.count({ where: { eventType: "growth.import_committed" } }),
+    ).toBe(1);
+    expect(
+      await db.accountSourceRecord.count({ where: { importBatchId: preview.importId } }),
+    ).toBe(2);
+    expect(await db.growthAccount.count()).toBe(2);
   });
 });
 

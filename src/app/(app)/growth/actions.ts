@@ -212,6 +212,7 @@ export async function previewImportAction(
     const preview = await previewImport(ctx, {
       filename: String(formData.get("filename") ?? "import.csv"),
       text: String(formData.get("text") ?? ""),
+      targetProfileId: String(formData.get("targetProfileId") ?? ""),
       mapping: mappingRaw ? (JSON.parse(mappingRaw) as ColumnMapping) : undefined,
     });
     return { ok: true, preview };
@@ -237,6 +238,8 @@ export async function commitImportAction(
       filename: String(formData.get("filename") ?? "import.csv"),
       text: String(formData.get("text") ?? ""),
       mapping: JSON.parse(String(formData.get("mapping") ?? "{}")) as ColumnMapping,
+      // targetProfileId is deliberately NOT read from the client at commit —
+      // the server uses the profile bound at preview.
       resolutions: JSON.parse(String(formData.get("resolutions") ?? "{}")),
       acceptPartial: String(formData.get("acceptPartial") ?? "") === "true",
     };
@@ -246,7 +249,7 @@ export async function commitImportAction(
     return {
       ok: true,
       accepted: result.accepted,
-      skipped: result.skippedDuplicates + result.tombstoneSkipped,
+      skipped: result.skippedDuplicates,
       linked: result.linked,
       rejected: result.rejected,
     };

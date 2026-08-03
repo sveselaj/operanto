@@ -11,11 +11,12 @@ import { ProfileForm } from "../profile-form";
 
 export const metadata: Metadata = { title: "Target Profile" };
 
+// Mirrors the server-side profile machine exactly (ARCHIVED is terminal).
 const NEXT_STATUSES: Record<string, string[]> = {
   DRAFT: ["ACTIVE", "ARCHIVED"],
   ACTIVE: ["PAUSED", "ARCHIVED"],
   PAUSED: ["ACTIVE", "ARCHIVED"],
-  ARCHIVED: ["DRAFT"],
+  ARCHIVED: [],
 };
 
 export default async function TargetProfileDetailPage({
@@ -47,9 +48,7 @@ export default async function TargetProfileDetailPage({
                       ? "Activate"
                       : status === "PAUSED"
                         ? "Pause"
-                        : status === "ARCHIVED"
-                          ? "Archive"
-                          : "Reopen as draft"}
+                        : "Archive"}
                   </Button>
                 </form>
               ))

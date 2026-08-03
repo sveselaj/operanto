@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "GrowthImportStatus" AS ENUM ('PREVIEWED', 'COMMITTED', 'FAILED');
+CREATE TYPE "GrowthImportStatus" AS ENUM ('PREVIEWED', 'COMMITTING', 'COMMITTED', 'FAILED');
 
 -- AlterTable
 ALTER TABLE "Activity" ADD COLUMN     "growthAccountId" TEXT;
@@ -9,6 +9,7 @@ CREATE TABLE "GrowthImport" (
     "id" TEXT NOT NULL,
     "organisationId" TEXT NOT NULL,
     "createdByMembershipId" TEXT,
+    "targetProfileId" TEXT,
     "filename" TEXT NOT NULL,
     "checksum" TEXT NOT NULL,
     "delimiter" TEXT NOT NULL,
@@ -37,4 +38,7 @@ ALTER TABLE "Task" ADD CONSTRAINT "Task_growthAccountId_fkey" FOREIGN KEY ("grow
 
 -- AddForeignKey
 ALTER TABLE "GrowthImport" ADD CONSTRAINT "GrowthImport_organisationId_fkey" FOREIGN KEY ("organisationId") REFERENCES "Organisation"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "GrowthImport" ADD CONSTRAINT "GrowthImport_targetProfileId_fkey" FOREIGN KEY ("targetProfileId") REFERENCES "TargetProfile"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
