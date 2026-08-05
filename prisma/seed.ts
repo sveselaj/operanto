@@ -262,10 +262,17 @@ async function main() {
           status: "CALLBACK" as const,
         },
       ];
+      // Assigned to the seeded admin: the work queue only shows work that is
+      // actually someone's, so unassigned demo leads would render an empty queue.
+      const adminMembership = await prisma.membership.findFirst({
+        where: { organisationId: organisation.id, role: "ADMIN", status: "ACTIVE" },
+        select: { id: true },
+      });
       for (const demo of demoLeads) {
         const lead = await prisma.lead.create({
           data: {
             organisationId: organisation.id,
+            assignedMembershipId: adminMembership?.id ?? null,
             fullName: demo.fullName,
             companyName: demo.companyName,
             phone: demo.phone,
@@ -297,6 +304,7 @@ async function main() {
               priority: "HIGH",
               status: "OPEN",
               dueAt,
+              assignedMembershipId: adminMembership?.id ?? null,
             },
           });
           await prisma.lead.update({

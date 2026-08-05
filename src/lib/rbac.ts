@@ -88,7 +88,12 @@ export type Permission =
   | "crm.leads.view_assigned"
   | "crm.leads.create"
   | "crm.leads.transition"
-  | "crm.leads.assign";
+  | "crm.leads.assign"
+  /* OI-4 operational workflow: calling is operator work; taking a colleague's
+   * work lock is supervisor-tier and always audited + notified. */
+  | "crm.calls.start"
+  | "crm.calls.record_outcome"
+  | "crm.locks.override";
 
 const MATRIX: Record<MembershipRole, Permission[]> = {
   ADMIN: [
@@ -149,6 +154,9 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "crm.leads.create",
     "crm.leads.transition",
     "crm.leads.assign",
+    "crm.calls.start",
+    "crm.calls.record_outcome",
+    "crm.locks.override",
   ],
   SUPERVISOR: [
     "customers:view_all",
@@ -198,6 +206,9 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "crm.leads.create",
     "crm.leads.transition",
     "crm.leads.assign",
+    "crm.calls.start",
+    "crm.calls.record_outcome",
+    "crm.locks.override",
   ],
   OPERATOR: [
     "customers:view_assigned",
@@ -222,6 +233,8 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "crm.view",
     "crm.leads.view_assigned",
     "crm.leads.transition",
+    "crm.calls.start",
+    "crm.calls.record_outcome",
   ],
   /* AUDITOR (OI-3): organisation-wide READ-ONLY compliance access — view
    * permissions only, never a mutating one. Conversations are deliberately

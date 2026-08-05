@@ -103,6 +103,9 @@ model Organisation {
   leads                    Lead[]
   leadStatusHistories      LeadStatusHistory[]
   telephonyConnections     TelephonyConnection[]
+  callAttempts             CallAttempt[]
+  leadWorkLocks            LeadWorkLock[]
+  notifications            Notification[]
 }
 
 model User {
@@ -166,6 +169,9 @@ model Membership {
   assignedLeads         Lead[]                    @relation("LeadAssignee")
   createdLeads          Lead[]                    @relation("LeadCreator")
   leadStatusChanges     LeadStatusHistory[]       @relation("LeadStatusChanger")
+  callAttempts          CallAttempt[]             @relation("CallCaller")
+  leadWorkLocks         LeadWorkLock[]            @relation("LockHolder")
+  notifications         Notification[]            @relation("NotificationRecipient")
 
   @@unique([organisationId, userId])
   @@index([userId])
@@ -1591,6 +1597,8 @@ model Lead {
   statusHistory LeadStatusHistory[]
   activities    Activity[]
   tasks         Task[]
+  callAttempts  CallAttempt[]
+  workLocks     LeadWorkLock[]
 
   @@index([organisationId, status])
   @@index([organisationId, assignedMembershipId])
@@ -1652,4 +1660,119 @@ model TelephonyConnection {
 
   @@unique([organisationId, provider, displayName])
   @@index([organisationId])
+}
+
+// ── CRM operational workflow (OI-4) ─────────────────────────────────
+// Work queue, exclusive work sessions (locks), one-click calling and
+// user-directed notifications. Rules live in packages/crm-workqueue,
+// crm-calloutcome and crm-callbacks; this schema holds their state.
+
+enum CallAttemptStatus {
+  LAUNCHED
+  COMPLETED
+  CANCELLED
+}
+
+/// Call outcomes (CRM vocabulary; packages/crm-calloutcome owns the rules
+/// mapping each to its allowed follow-up actions and status target).
+enum CallOutcome {
+  CONNECTED
+  NO_ANSWER
+  BUSY
+  VOICEMAIL
+  WRONG_NUMBER
+  UNAVAILABLE
+  CALLBACK_REQUESTED
+  APPOINTMENT_BOOKED
+  QUALIFIED
+  REJECTED
+  DO_NOT_CONTACT
+}
+
+enum LockReleaseReason {
+  COMPLETED
+  NEXT
+  EXIT
+  LOGOUT
+  EXPIRED
+  OVERRIDDEN
+}
+
+/// One launched call. The row (and its Activity) exist BEFORE the dial is
+/// handed to the provider, so an abandoned call is still evidence.
+model CallAttempt {
+  id                String            @id @default(cuid())
+  organisationId    String
+  leadId            String
+  membershipId      String?
+  provider          String
+  dialedNumber      String
+  rawPhone          String?
+  status            CallAttemptStatus @default(LAUNCHED)
+  outcome           CallOutcome?
+  outcomeRecordedAt DateTime?
+  durationSeconds   Int?
+  /// "manual" today; "provider" once a telephony adapter reports it.
+  durationSource    String?
+  note              String?
+  cancelReason      String?
+  /// The timeline row mutated in place when the outcome lands (never a second entry).
+  activityId        String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  caller       Membership?  @relation("CallCaller", fields: [membershipId], references: [id], onDelete: SetNull)
+
+  @@index([organisationId, status, createdAt])
+  @@index([leadId, createdAt])
+}
+
+/// Exclusive work session on a lead. At most ONE active lock per lead is
+/// guaranteed by a PARTIAL UNIQUE INDEX (leadId WHERE releasedAt IS NULL)
+/// added by hand in the migration SQL — Prisma cannot express it. Keep it.
+model LeadWorkLock {
+  id             String             @id @default(cuid())
+  organisationId String
+  leadId         String
+  membershipId   String
+  acquiredAt     DateTime           @default(now())
+  expiresAt      DateTime
+  refreshedAt    DateTime?
+  releasedAt     DateTime?
+  releaseReason  LockReleaseReason?
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  holder       Membership   @relation("LockHolder", fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([leadId, releasedAt])
+  @@index([organisationId, membershipId, releasedAt])
+}
+
+/// In-app notification, addressed to ONE membership. Payloads are i18n keys,
+/// never stored prose. Idempotency rests on the (membership, type, entity,
+/// dedupeKey) unique — NULL dedupeKeys are distinct, so event notifications
+/// never collide while sweep-generated ones stay idempotent.
+model Notification {
+  id             String    @id @default(cuid())
+  organisationId String
+  membershipId   String
+  type           String
+  titleKey       String
+  messageKey     String
+  entityType     String?
+  entityId       String?
+  metadata       Json?
+  dedupeKey      String?
+  readAt         DateTime?
+  dismissedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  recipient    Membership   @relation("NotificationRecipient", fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, type, entityId, dedupeKey])
+  @@index([membershipId, readAt, createdAt])
 }
