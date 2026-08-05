@@ -299,6 +299,40 @@ export default async function IntegrationsPage() {
               ))}
             </div>
           ) : null}
+          <Card className="mb-3">
+            <CardContent className="pt-5">
+              <p className="mb-2 text-sm font-medium">Setup guide</p>
+              <ol className="list-decimal space-y-1.5 pl-4 text-xs text-muted-foreground">
+                <li>
+                  Open your phone system in the browser and check the <strong>address
+                  bar</strong> — the domain tells you which provider it is (e.g.
+                  app.cloudtalk.io → CloudTalk). Pick it below; use &quot;Other /
+                  generic&quot; if it is not listed.
+                </li>
+                <li>
+                  In the phone system&apos;s own admin area, find <strong>Settings →
+                  API / Integrations / Developer</strong> and create an{" "}
+                  <strong>API key</strong> (the hint under the provider dropdown
+                  says where). You need admin rights there.
+                </li>
+                <li>
+                  Enter the key in the form below and save. Credentials are stored
+                  encrypted and never shown again — do not send them by email or
+                  chat; this form is the only place they belong.
+                </li>
+                <li>
+                  After saving, a <strong>webhook secret is shown exactly once</strong> —
+                  copy it and keep it safe. It is needed when call events are
+                  switched on.
+                </li>
+                <li>
+                  Leave <strong>inbound and outbound switched off</strong> for now.
+                  They are enabled step by step once the connection is verified;
+                  calls then appear on the matching leads automatically.
+                </li>
+              </ol>
+            </CardContent>
+          </Card>
           <Card>
             <CardContent className="pt-5">
               <p className="mb-3 text-xs text-muted-foreground">
