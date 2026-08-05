@@ -106,12 +106,14 @@ export function parseImportDate(raw: string, timezone: string): Date | null {
   }
 
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const pad = (n: number) => String(n).padStart(2, "0");
   const normalizedTime = time.length === 5 ? `${time}:00` : time;
-  const candidate = new TZDate(
-    `${year}-${pad(month)}-${pad(day)}T${normalizedTime}`,
-    timezone
-  );
+  const [hh, mm, ss] = normalizedTime.split(":").map(Number);
+  if (hh > 23 || mm > 59 || ss > 59) return null;
+  // Component construction interprets the wall-clock values IN `timezone`.
+  // (String construction would parse in the PROCESS timezone and only
+  // re-frame the representation — a UTC server would shift every German
+  // import date by one/two hours.)
+  const candidate = new TZDate(year, month - 1, day, hh, mm, ss, timezone);
   if (Number.isNaN(candidate.getTime())) return null;
   // Reject silently rolled-over impossible dates (e.g. 31.02.).
   if (candidate.getMonth() + 1 !== month || candidate.getDate() !== day) return null;

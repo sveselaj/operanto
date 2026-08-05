@@ -5,11 +5,16 @@ import { requirePermission } from "@/lib/rbac";
 import { scope, type OrgContext } from "@/lib/org-context";
 import { audit } from "@/lib/audit";
 import { encryptSecret } from "@/lib/crypto";
-import { voiceEnabled } from "@/lib/voice-flag";
 import { telephonyProvider } from "@/lib/telephony-providers";
 
 /**
  * Telephony connection administration (provider-neutral; OI voice slice 1).
+ *
+ * Deliberately NOT behind an environment flag: this is configuration
+ * storage an admin manages entirely in the app (the user requirement).
+ * Nothing operational happens from a stored connection - dialing and
+ * webhook ingestion arrive with the adapter slice and carry their own
+ * runtime gates (per-connection inbound/outbound stage gates below).
  *
  * Mirrors the WhatsApp connection discipline: credentials encrypted before
  * they touch the database, never returned from any function here, never in
@@ -18,10 +23,6 @@ import { telephonyProvider } from "@/lib/telephony-providers";
  * The provider catalog (src/lib/telephony-providers.ts) is the single source
  * of truth for which credential fields each provider requires.
  */
-
-function requireVoice(): void {
-  if (!voiceEnabled()) throw new Error("Telephony is not enabled for this deployment");
-}
 
 const publicSelect = {
   id: true,
@@ -38,7 +39,6 @@ const publicSelect = {
 } as const;
 
 export async function listTelephonyConnections(ctx: OrgContext) {
-  requireVoice();
   requirePermission(ctx.membership.role, "channels:manage");
   return prisma.telephonyConnection.findMany({
     where: scope(ctx),
@@ -68,7 +68,6 @@ export async function connectTelephony(
   ctx: OrgContext,
   input: ConnectTelephonyInput,
 ): Promise<ConnectTelephonyResult> {
-  requireVoice();
   requirePermission(ctx.membership.role, "channels:connect");
 
   const spec = telephonyProvider(input.provider);
@@ -134,7 +133,6 @@ export async function setTelephonyStageGates(
   connectionId: string,
   gates: { inboundEnabled?: boolean; outboundEnabled?: boolean },
 ): Promise<void> {
-  requireVoice();
   requirePermission(ctx.membership.role, "channels:manage");
   const existing = await prisma.telephonyConnection.findFirst({
     where: { ...scope(ctx), id: connectionId },
@@ -165,7 +163,6 @@ export async function disableTelephonyConnection(
   ctx: OrgContext,
   connectionId: string,
 ): Promise<void> {
-  requireVoice();
   requirePermission(ctx.membership.role, "channels:manage");
   const existing = await prisma.telephonyConnection.findFirst({
     where: { ...scope(ctx), id: connectionId },

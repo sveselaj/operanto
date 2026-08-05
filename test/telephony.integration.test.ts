@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 /**
  * Telephony connection settings against real PostgreSQL: flag gate, admin-only
@@ -52,25 +52,11 @@ async function makeCtx(slug: string, role: Role = "ADMIN") {
   };
 }
 
-beforeEach(() => {
-  process.env.OPERANTO_VOICE_ENABLED = "1";
-});
-
 afterAll(async () => {
-  delete process.env.OPERANTO_VOICE_ENABLED;
   await db.$disconnect();
 });
 
 describeDb("telephony connections", () => {
-  it("refuses everything when the voice flag is off", async () => {
-    process.env.OPERANTO_VOICE_ENABLED = "0";
-    const ctx = await makeCtx("tel-flag");
-    await expect(listTelephonyConnections(ctx)).rejects.toThrow(/not enabled/);
-    await expect(
-      connectTelephony(ctx, { provider: "cloudtalk", displayName: "X", apiKey: "k", apiSecret: "s" }),
-    ).rejects.toThrow(/not enabled/);
-  });
-
   it("is admin-only (channels:connect / channels:manage)", async () => {
     for (const role of ["SUPERVISOR", "OPERATOR", "AUDITOR"] as const) {
       const ctx = await makeCtx("tel-perms", role);

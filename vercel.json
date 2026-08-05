@@ -1,5 +1,5 @@
 {
-  "buildCommand": "pnpm db:deploy && pnpm build",
+  "buildCommand": "[ -z \"$DATABASE_URL\" ] || pnpm db:deploy && pnpm build",
   "redirects": [
     {
       "source": "/:path*",

@@ -14,7 +14,6 @@ import { formatDateTime } from "@/lib/format";
 import { WhatsAppConnectForm } from "./whatsapp-connect-form";
 import { TelephonyConnectForm } from "./telephony-connect-form";
 import { disableTelephonyAction, setTelephonyGatesAction } from "./telephony-actions";
-import { voiceEnabled } from "@/lib/voice-flag";
 import { listTelephonyConnections } from "@/lib/services/telephony";
 import { telephonyProvider } from "@/lib/telephony-providers";
 import {
@@ -37,10 +36,9 @@ export default async function IntegrationsPage() {
         orderBy: [{ type: "asc" }, { displayName: "asc" }],
       })
     : [];
-  const telephonyConnections =
-    voiceEnabled() && can(ctx.membership.role, "channels:manage")
-      ? await listTelephonyConnections(ctx)
-      : [];
+  const telephonyConnections = can(ctx.membership.role, "channels:manage")
+    ? await listTelephonyConnections(ctx)
+    : [];
   const templates = can(ctx.membership.role, "templates:manage")
     ? await prisma.messageTemplate.findMany({
         where: scope(ctx),
@@ -225,7 +223,7 @@ export default async function IntegrationsPage() {
         </div>
       ) : null}
 
-      {voiceEnabled() && can(ctx.membership.role, "channels:manage") ? (
+      {can(ctx.membership.role, "channels:manage") ? (
         <div className="mt-6 max-w-xl">
           <h2 className="mb-2 text-sm font-semibold">Telephony</h2>
           {telephonyConnections.length > 0 ? (

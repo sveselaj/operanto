@@ -1,7 +1,7 @@
 /**
- * Voice/telephony feature flag — server-side only, environment-controlled,
- * default off, exactly like the Growth and CRM flags. Gates the telephony
- * connection settings today and the calling/webhook slices later.
+ * Voice RUNTIME flag - reserved for the adapter slice (dialing, webhook
+ * ingestion). Connection SETTINGS are deliberately not gated by it: admins
+ * manage them entirely in the app. Server-side only, default off.
  */
 export function voiceEnabled(): boolean {
   return process.env.OPERANTO_VOICE_ENABLED === "1";

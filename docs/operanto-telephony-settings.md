@@ -1,7 +1,9 @@
 # Telephony connection settings (OI voice — slice 1)
 
-Status: delivered on `feature/oi-3-crm-foundation`, flag-gated
-(`OPERANTO_VOICE_ENABLED=1`, default off). Settings only — **no telephony
+Status: delivered on `feature/oi-3-crm-foundation`. The settings surface is
+deliberately NOT env-flag-gated — admins manage the connection entirely in
+the app (Integrations → Telephony); `OPERANTO_VOICE_ENABLED` is reserved for
+the future RUNTIME (dialing/webhooks). Settings only — **no telephony
 behavior ships in this slice**: no adapter, no webhook route, no dialing.
 A stored connection does nothing until the provider adapter (calling slice /
 OI-8) consumes it.
@@ -49,8 +51,8 @@ against the stored signing secret.
 
 The organisation's real phone system is currently unlinked (calls leave no
 trace in the CRM). Once the provider is confirmed, the activation order is:
-enable `OPERANTO_VOICE_ENABLED` on staging → admin saves the connection in
-Settings → Integrations (API key from the provider's admin console) →
+admin saves the connection in Settings → Integrations (API key from the
+provider's admin console; in-app setup guide on the page) →
 adapter slice ships → inbound gate on (calls/voicemails appear on leads) →
 outbound gate on (click-to-call). No credentials ever travel through chat,
 tickets, or commits — only the settings form.
