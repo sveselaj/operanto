@@ -231,6 +231,84 @@ async function main() {
   }
 
   console.log(`Seed complete. Organisation: ${organisation.slug} (${organisation.id})`);
+  // ── CRM module demo fixtures (OI-3) ───────────────────────────────
+  // Entirely fictional people; unroutable numbers/domains. Gated so
+  // ordinary seeds stay lean. Development only, like the growth fixtures.
+  if (process.env.SEED_CRM_DEMO === "1") {
+    const existingLead = await prisma.lead.findFirst({
+      where: { organisationId: organisation.id, fullName: "Miriam Beispiel (Demo)" },
+    });
+    if (!existingLead) {
+      const demoLeads = [
+        {
+          fullName: "Miriam Beispiel (Demo)",
+          companyName: "Beispiel Fenster GmbH",
+          phone: "+49 151 00000001",
+          email: "miriam@beispiel.example",
+          status: "NEW" as const,
+        },
+        {
+          fullName: "Jon Demo (Demo)",
+          companyName: null,
+          phone: "+49 151 00000002",
+          email: "jon@demo.example",
+          status: "CONTACTED" as const,
+        },
+        {
+          fullName: "Arta Muster (Demo)",
+          companyName: "Muster Renovierung",
+          phone: "+49 151 00000003",
+          email: "arta@muster.example",
+          status: "CALLBACK" as const,
+        },
+      ];
+      for (const demo of demoLeads) {
+        const lead = await prisma.lead.create({
+          data: {
+            organisationId: organisation.id,
+            fullName: demo.fullName,
+            companyName: demo.companyName,
+            phone: demo.phone,
+            phoneNormalized: demo.phone.replace(/\s+/g, ""),
+            phoneStatus: "VALID",
+            email: demo.email,
+            emailNormalized: demo.email,
+            origin: "manual",
+            source: "Demo-Seed",
+            status: demo.status,
+          },
+        });
+        await prisma.leadStatusHistory.create({
+          data: {
+            organisationId: organisation.id,
+            leadId: lead.id,
+            previousStatus: null,
+            newStatus: "NEW",
+          },
+        });
+        if (demo.status === "CALLBACK") {
+          const dueAt = new Date(Date.now() + 24 * 3_600_000);
+          await prisma.task.create({
+            data: {
+              organisationId: organisation.id,
+              leadId: lead.id,
+              type: "CALLBACK",
+              title: demo.fullName,
+              priority: "HIGH",
+              status: "OPEN",
+              dueAt,
+            },
+          });
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: { callbackAt: dueAt, nextActionAt: dueAt },
+          });
+        }
+      }
+      console.log("CRM demo fixtures created (3 leads).");
+    }
+  }
+
   // ── Growth Prospecting Program demo fixtures (G1) ─────────────────
   // Entirely fictional companies and people; every domain is .example
   // (reserved, unroutable). Gated so ordinary seeds stay lean.

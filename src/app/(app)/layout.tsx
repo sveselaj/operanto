@@ -2,6 +2,7 @@ import { requireOrg, listMyOrganisations } from "@/lib/org-context";
 import { Sidebar } from "@/components/app/sidebar";
 import { Topbar } from "@/components/app/topbar";
 import { growthEnabled } from "@/lib/growth-flag";
+import { crmEnabled } from "@/lib/crm-flag";
 
 export default async function AppLayout({
   children,
@@ -16,7 +17,7 @@ export default async function AppLayout({
 
   return (
     <div className="flex min-h-screen bg-background">
-      <Sidebar role={ctx.membership.role} growth={growthEnabled()} />
+      <Sidebar role={ctx.membership.role} growth={growthEnabled()} crm={crmEnabled()} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
           ctx={ctx}

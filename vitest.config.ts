@@ -10,6 +10,11 @@ export const testAliases = [
   },
   // Mirror the tsconfig `@/*` -> `src/*` path alias.
   { find: /^@\/(.*)$/, replacement: fileURLToPath(new URL("./src/$1", import.meta.url)) },
+  // CRM engine packages (OI-3): `@operanto/<pkg>` -> `packages/<pkg>/src`.
+  {
+    find: /^@operanto\/(.*)$/,
+    replacement: fileURLToPath(new URL("./packages/$1/src/index.ts", import.meta.url)),
+  },
 ];
 
 export default defineConfig({
@@ -19,7 +24,11 @@ export default defineConfig({
     // (vitest.integration.config.ts). Those need a real database and must run
     // serially; leaving them in this glob would silently parallelise them on
     // any machine that happens to export TEST_DATABASE_URL.
-    include: ["src/**/*.test.ts", "test/**/*.test.ts"],
+    include: [
+      "src/**/*.test.ts",
+      "test/**/*.test.ts",
+      "packages/**/src/**/*.test.ts",
+    ],
     exclude: ["**/node_modules/**", "**/*.integration.test.ts"],
   },
   resolve: { alias: testAliases },

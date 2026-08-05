@@ -36,6 +36,10 @@ enum MembershipRole {
   ADMIN
   SUPERVISOR
   OPERATOR
+  /// Organisation-wide read-only compliance access (OI-3; approved OI-1 §11).
+  /// Holds view permissions only — assertive writes are structurally denied
+  /// by the permission matrix. Requires 2FA like the other privileged roles.
+  AUDITOR
 }
 
 enum MembershipStatus {
@@ -96,6 +100,8 @@ model Organisation {
   outreachDraftVersions    OutreachDraftVersion[]
   suppressionEntries       SuppressionEntry[]
   growthImports            GrowthImport[]
+  leads                    Lead[]
+  leadStatusHistories      LeadStatusHistory[]
 }
 
 model User {
@@ -151,6 +157,9 @@ model Membership {
   reviewingApprovals    ApprovalRequest[]         @relation("ApprovalReviewer")
   decidedApprovals      ApprovalRequest[]         @relation("ApprovalDecider")
   consentUpdates        Consent[]                 @relation("ConsentUpdater")
+  assignedLeads         Lead[]                    @relation("LeadAssignee")
+  createdLeads          Lead[]                    @relation("LeadCreator")
+  leadStatusChanges     LeadStatusHistory[]       @relation("LeadStatusChanger")
 
   @@unique([organisationId, userId])
   @@index([userId])
@@ -313,6 +322,7 @@ model Customer {
   channelIdentities CustomerIdentity[]
   aiActions     AIAction[]
   consents      Consent[]
+  leads         Lead[]
 
   @@unique([organisationId, sourceSystem, sourceCustomerId])
   @@index([organisationId, emailNormalized])
@@ -418,6 +428,8 @@ model Activity {
   conversationId    String?
   /// Growth prospecting: account-level timeline events (G2, additive).
   growthAccountId   String?
+  /// CRM module: lead-level timeline events (OI-3, additive).
+  leadId            String?
   actorType         ActorType
   actorUserId       String?
   actorMembershipId String?
@@ -433,16 +445,22 @@ model Activity {
   opportunity  Opportunity?  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   growthAccount GrowthAccount? @relation(fields: [growthAccountId], references: [id], onDelete: Cascade)
+  lead          Lead?          @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
   @@index([organisationId, occurredAt])
   @@index([opportunityId, occurredAt])
   @@index([customerId, occurredAt])
   @@index([conversationId, occurredAt])
+  @@index([leadId, occurredAt])
 }
 
 enum TaskStatus {
   OPEN
   COMPLETED
+  /// OI-3 (additive, per the target architecture's "richer status values
+  /// appended"): auto-cancelled work — e.g. open lead tasks when the lead
+  /// reaches a terminal status. Distinct from COMPLETED: nobody did it.
+  CANCELLED
 }
 
 enum TaskPriority {
@@ -461,6 +479,12 @@ model Task {
   /// Set when the task was raised from a conversation, so the work stays
   /// visible in that conversation's timeline and the customer's context.
   conversationId        String?
+  /// CRM module: lead follow-up work, incl. THE open callback task (OI-3).
+  leadId                String?
+  /// Task type within its module, string-typed like Activity.activityType
+  /// (CRM uses the crm-domain TaskType vocabulary, e.g. "CALLBACK"). Null for
+  /// pre-OI-3 tasks and generic follow-ups.
+  type                  String?
   assignedMembershipId  String?
   createdByMembershipId String?
   title                 String
@@ -476,6 +500,7 @@ model Task {
   opportunity  Opportunity?  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   growthAccount GrowthAccount? @relation(fields: [growthAccountId], references: [id], onDelete: Cascade)
+  lead         Lead?         @relation(fields: [leadId], references: [id], onDelete: Cascade)
   assignee     Membership?   @relation("TaskAssignee", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
   createdBy    Membership?   @relation("TaskCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
 
@@ -483,6 +508,7 @@ model Task {
   @@index([organisationId, assignedMembershipId])
   @@index([opportunityId])
   @@index([conversationId])
+  @@index([leadId])
 }
 
 // ── Conversations foundation ───────────────────────────────────────
@@ -1467,4 +1493,122 @@ model GrowthImport {
   targetProfile TargetProfile? @relation(fields: [targetProfileId], references: [id], onDelete: SetNull)
 
   @@index([organisationId, createdAt])
+}
+
+// ── CRM module (OI-3; engine packages under packages/crm-*) ─────────
+// The general commercial pipeline reserved by product decision 10: a Lead is
+// the sales PURSUIT work item about a counterpart — not the person (Customer)
+// and not the Pronatona Opportunity projection. Business language:
+// CRIMSS repo docs/OPERANTO_CANONICAL_DOMAIN_MODEL.md.
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  NO_ANSWER_1
+  NO_ANSWER_2
+  NO_ANSWER_3
+  RETRY_LATER
+  CALLBACK
+  APPOINTMENT
+  QUALIFIED
+  CONVERTED
+  REJECTED
+  LOST
+  WRONG_NUMBER
+  UNAVAILABLE
+  DO_NOT_CONTACT
+}
+
+enum LeadPhoneStatus {
+  MISSING
+  VALID
+  POSSIBLE
+  INVALID
+}
+
+model Lead {
+  id             String     @id @default(cuid())
+  organisationId String
+  /// The person this pursuit is about, once resolved via the identity ladder.
+  /// Nullable: intake precedes identity. Contact fields below are WORKING
+  /// COPIES for the sales workflow (dialing), never a second identity model.
+  customerId     String?
+
+  fullName          String
+  firstName         String?
+  lastName          String?
+  companyName       String?
+  phone             String?
+  phoneNormalized   String? // E.164 matching/dialing key (crm-phone)
+  phoneCountry      String?
+  phoneNational     String?
+  phoneExtension    String?
+  phoneStatus       LeadPhoneStatus @default(MISSING)
+  secondaryPhone    String?
+  email             String?
+  emailNormalized   String?
+
+  /// Provenance — never lost (canonical intake rule).
+  origin            String // manual | import | contact_request | growth_handoff
+  source            String?
+  externalReference String?
+  dataOrigin        String?
+
+  estimatedValue Decimal? @db.Decimal(12, 2)
+  currency       String   @default("EUR")
+
+  status          LeadStatus @default(NEW)
+  rejectionReason String?
+  convertedAt     DateTime?
+  lostAt          DateTime?
+  archivedAt      DateTime?
+
+  assignedMembershipId  String?
+  createdByMembershipId String?
+
+  /// DERIVED scheduling fields — recomputed by syncLeadActionFields inside
+  /// every transaction that touches this lead's tasks; never set ad hoc.
+  lastActivityAt DateTime?
+  nextActionAt   DateTime?
+  callbackAt     DateTime?
+
+  /// Do-not-contact workflow flag; enforced at every outbound entry point.
+  doNotCall Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organisation  Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  customer      Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  assignee      Membership?  @relation("LeadAssignee", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
+  createdBy     Membership?  @relation("LeadCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
+  statusHistory LeadStatusHistory[]
+  activities    Activity[]
+  tasks         Task[]
+
+  @@index([organisationId, status])
+  @@index([organisationId, assignedMembershipId])
+  @@index([organisationId, phoneNormalized])
+  @@index([organisationId, emailNormalized])
+  @@index([organisationId, nextActionAt])
+  @@index([customerId])
+}
+
+/// Append-only status trail (one row per transition; null previousStatus on
+/// creation). No update/delete path exists anywhere in the application.
+model LeadStatusHistory {
+  id                    String     @id @default(cuid())
+  organisationId        String
+  leadId                String
+  previousStatus        LeadStatus?
+  newStatus             LeadStatus
+  changedByMembershipId String?
+  reason                String?
+  createdAt             DateTime   @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  changedBy    Membership?  @relation("LeadStatusChanger", fields: [changedByMembershipId], references: [id], onDelete: SetNull)
+
+  @@index([leadId, createdAt])
 }

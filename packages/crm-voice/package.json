@@ -1,0 +1,9 @@
+{
+  "name": "@operanto/crm-voice",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Operanto CRM engine package (crm-voice) — pure business logic, no framework imports. See docs/OPERANTO_SHARED_SERVICES.md.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false
+}

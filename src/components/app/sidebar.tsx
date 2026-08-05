@@ -12,6 +12,7 @@ import {
   Users,
 } from "lucide-react";
 import type { MembershipRole } from "@prisma/client";
+import { Phone } from "lucide-react";
 import { can } from "@/lib/rbac";
 
 const CORE_ITEMS = [
@@ -26,10 +27,16 @@ const CORE_ITEMS = [
 export function Sidebar({
   role,
   growth = false,
+  crm = false,
 }: {
   role: MembershipRole;
   growth?: boolean;
+  crm?: boolean;
 }) {
+  const crmItems =
+    crm && can(role, "crm.view")
+      ? [{ href: "/crm/leads", label: "Leads", icon: Phone }]
+      : [];
   const growthItems =
     growth && can(role, "growth:view")
       ? [
@@ -66,6 +73,23 @@ export function Sidebar({
             {item.label}
           </Link>
         ))}
+        {crmItems.length > 0 ? (
+          <div className="pt-4">
+            <p className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-white/40">
+              CRM
+            </p>
+            {crmItems.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm hover:bg-white/10 hover:text-white"
+              >
+                <item.icon className="h-4 w-4" aria-hidden />
+                {item.label}
+              </Link>
+            ))}
+          </div>
+        ) : null}
         {growthItems.length > 0 ? (
           <div className="pt-4">
             <p className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-white/40">
