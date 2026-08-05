@@ -76,7 +76,19 @@ export type Permission =
   | "growth:record_manual_send"
   | "growth:manage_privacy"
   | "growth:manage_providers"
-  | "growth:view_audit";
+  | "growth:view_audit"
+  /* ── CRM module (OI-3). Canonical dot-namespaced names per the OI program's
+   *    permission model (CRIMSS repo, docs/OPERANTO_PERMISSION_MODEL.md):
+   *    the `crm.*` family uses dots; this matrix is the ONE engine in this
+   *    deployment. Lead visibility: view_all vs view_assigned mirrors the
+   *    customers/opportunities pattern; transitions are operator work;
+   *    manual creation and assignment are supervisor-tier. */
+  | "crm.view"
+  | "crm.leads.view_all"
+  | "crm.leads.view_assigned"
+  | "crm.leads.create"
+  | "crm.leads.transition"
+  | "crm.leads.assign";
 
 const MATRIX: Record<MembershipRole, Permission[]> = {
   ADMIN: [
@@ -131,6 +143,12 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "growth:manage_privacy",
     "growth:manage_providers",
     "growth:view_audit",
+    "crm.view",
+    "crm.leads.view_all",
+    "crm.leads.view_assigned",
+    "crm.leads.create",
+    "crm.leads.transition",
+    "crm.leads.assign",
   ],
   SUPERVISOR: [
     "customers:view_all",
@@ -174,6 +192,12 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "growth:approve_drafts",
     "growth:record_manual_send",
     "growth:view_audit",
+    "crm.view",
+    "crm.leads.view_all",
+    "crm.leads.view_assigned",
+    "crm.leads.create",
+    "crm.leads.transition",
+    "crm.leads.assign",
   ],
   OPERATOR: [
     "customers:view_assigned",
@@ -195,6 +219,24 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "growth:review_evidence",
     "growth:generate_drafts",
     "growth:edit_drafts",
+    "crm.view",
+    "crm.leads.view_assigned",
+    "crm.leads.transition",
+  ],
+  /* AUDITOR (OI-3): organisation-wide READ-ONLY compliance access — view
+   * permissions only, never a mutating one. Conversations are deliberately
+   * excluded (message content is not audit material; the audit log is). */
+  AUDITOR: [
+    "customers:view_all",
+    "customers:view_assigned",
+    "opportunities:view_all",
+    "opportunities:view_assigned",
+    "activity:view_all",
+    "audit:view",
+    "growth:view_audit",
+    "crm.view",
+    "crm.leads.view_all",
+    "crm.leads.view_assigned",
   ],
 };
 

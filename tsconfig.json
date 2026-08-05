@@ -19,7 +19,8 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@operanto/*": ["./packages/*/src/index.ts"]
     }
   },
   "include": [

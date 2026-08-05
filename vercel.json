@@ -1,8 +1,14 @@
 {
+  "buildCommand": "[ -z \"$DATABASE_URL\" ] || pnpm db:deploy && pnpm build",
   "redirects": [
     {
       "source": "/:path*",
-      "has": [{ "type": "host", "value": "www.operanto.ai" }],
+      "has": [
+        {
+          "type": "host",
+          "value": "www.operanto.ai"
+        }
+      ],
       "destination": "https://operanto.ai/:path*",
       "permanent": true
     }

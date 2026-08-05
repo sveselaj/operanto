@@ -37,6 +37,7 @@ const ERASED_TEXT = "[erased]";
 export type ErasureResult = {
   customerId: string;
   opportunities: number;
+  leads: number;
   activities: number;
   events: number;
   conversations: number;
@@ -101,6 +102,44 @@ export async function eraseCustomer(
         where: { ...scope(ctx), customerId: customer.id },
         data: { inquiryText: null, summary: ERASED_TEXT },
       });
+
+      // 2b. CRM leads linked to this customer (OI-3). Working-copy contact
+      //     fields are exactly the personal data being erased; the pipeline
+      //     row itself survives so status history and reporting stay intact.
+      //     Leads that were never linked to a customer are pre-identity
+      //     working data and are addressed by lead-level retention (OI-5).
+      const leads = await tx.lead.updateMany({
+        where: { ...scope(ctx), customerId: customer.id },
+        data: {
+          fullName: ERASED_TEXT,
+          firstName: null,
+          lastName: null,
+          phone: null,
+          phoneNormalized: null,
+          phoneCountry: null,
+          phoneNational: null,
+          phoneExtension: null,
+          secondaryPhone: null,
+          email: null,
+          emailNormalized: null,
+          doNotCall: true,
+        },
+      });
+      const leadRows = await tx.lead.findMany({
+        where: { ...scope(ctx), customerId: customer.id },
+        select: { id: true },
+      });
+      const leadIds = leadRows.map((l) => l.id);
+      if (leadIds.length > 0) {
+        await tx.activity.updateMany({
+          where: { ...scope(ctx), leadId: { in: leadIds } },
+          data: { summary: ERASED_TEXT, metadata: Prisma.DbNull },
+        });
+        await tx.task.updateMany({
+          where: { ...scope(ctx), leadId: { in: leadIds } },
+          data: { title: ERASED_TEXT, description: null },
+        });
+      }
 
       // 3. Timeline. Summaries are human-readable and often quote the person;
       //    metadata carries the original message and identity fields.
@@ -332,6 +371,7 @@ export async function eraseCustomer(
       return {
         customerId: customer.id,
         opportunities: opportunities.count,
+        leads: leads.count,
         activities: activities.count,
         events,
         conversations: conversationIds.length,

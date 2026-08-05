@@ -22,7 +22,7 @@ import {
  */
 
 /** Roles that must have 2FA — they can read every customer in the tenant. */
-const ROLES_REQUIRING_2FA: MembershipRole[] = ["ADMIN", "SUPERVISOR"];
+const ROLES_REQUIRING_2FA: MembershipRole[] = ["ADMIN", "SUPERVISOR", "AUDITOR"];
 
 export function roleRequiresTwoFactor(role: MembershipRole): boolean {
   return ROLES_REQUIRING_2FA.includes(role);

@@ -12,6 +12,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/format";
 import { WhatsAppConnectForm } from "./whatsapp-connect-form";
+import { TelephonyConnectForm } from "./telephony-connect-form";
+import { disableTelephonyAction, setTelephonyGatesAction } from "./telephony-actions";
+import { listTelephonyConnections } from "@/lib/services/telephony";
+import { telephonyProvider } from "@/lib/telephony-providers";
 import {
   createTemplateAction,
   setStageGateAction,
@@ -31,6 +35,9 @@ export default async function IntegrationsPage() {
         where: scope(ctx),
         orderBy: [{ type: "asc" }, { displayName: "asc" }],
       })
+    : [];
+  const telephonyConnections = can(ctx.membership.role, "channels:manage")
+    ? await listTelephonyConnections(ctx)
     : [];
   const templates = can(ctx.membership.role, "templates:manage")
     ? await prisma.messageTemplate.findMany({
@@ -211,6 +218,129 @@ export default async function IntegrationsPage() {
                   Add template
                 </Button>
               </form>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
+      {can(ctx.membership.role, "channels:manage") ? (
+        <div className="mt-6 max-w-xl">
+          <h2 className="mb-2 text-sm font-semibold">Telephony</h2>
+          {telephonyConnections.length > 0 ? (
+            <div className="mb-3 divide-y divide-border rounded-lg border border-border bg-card">
+              {telephonyConnections.map((connection) => (
+                <div key={connection.id} className="px-4 py-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{connection.displayName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {telephonyProvider(connection.provider)?.label ?? connection.provider}
+                        {connection.accountRef ? ` · ${connection.accountRef}` : ""}
+                        {" · connected "}
+                        {formatDateTime(connection.createdAt)}
+                        {connection.lastError ? ` · error: ${connection.lastError}` : ""}
+                      </p>
+                    </div>
+                    <Badge variant={connection.status === "ACTIVE" ? "default" : "danger"}>
+                      {connection.status}
+                    </Badge>
+                  </div>
+                  {connection.status === "ACTIVE" ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Badge variant={connection.inboundEnabled ? "default" : "outline"}>
+                        inbound {connection.inboundEnabled ? "on" : "off"}
+                      </Badge>
+                      <Badge variant={connection.outboundEnabled ? "default" : "outline"}>
+                        outbound {connection.outboundEnabled ? "on" : "off"}
+                      </Badge>
+                      <form action={setTelephonyGatesAction}>
+                        <input type="hidden" name="connectionId" value={connection.id} />
+                        <input
+                          type="hidden"
+                          name="inboundEnabled"
+                          value={connection.inboundEnabled ? "0" : "1"}
+                        />
+                        <input
+                          type="hidden"
+                          name="outboundEnabled"
+                          value={connection.outboundEnabled ? "1" : "0"}
+                        />
+                        <Button type="submit" variant="outline" size="sm">
+                          {connection.inboundEnabled ? "Disable inbound" : "Enable inbound"}
+                        </Button>
+                      </form>
+                      <form action={setTelephonyGatesAction}>
+                        <input type="hidden" name="connectionId" value={connection.id} />
+                        <input
+                          type="hidden"
+                          name="inboundEnabled"
+                          value={connection.inboundEnabled ? "1" : "0"}
+                        />
+                        <input
+                          type="hidden"
+                          name="outboundEnabled"
+                          value={connection.outboundEnabled ? "0" : "1"}
+                        />
+                        <Button type="submit" variant="outline" size="sm">
+                          {connection.outboundEnabled ? "Disable outbound" : "Enable outbound"}
+                        </Button>
+                      </form>
+                      <form action={disableTelephonyAction}>
+                        <input type="hidden" name="connectionId" value={connection.id} />
+                        <Button type="submit" variant="outline" size="sm">
+                          Disconnect
+                        </Button>
+                      </form>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <Card className="mb-3">
+            <CardContent className="pt-5">
+              <p className="mb-2 text-sm font-medium">Setup guide</p>
+              <ol className="list-decimal space-y-1.5 pl-4 text-xs text-muted-foreground">
+                <li>
+                  Open your phone system in the browser and check the <strong>address
+                  bar</strong> — the domain tells you which provider it is (e.g.
+                  app.cloudtalk.io → CloudTalk). Pick it below; use &quot;Other /
+                  generic&quot; if it is not listed.
+                </li>
+                <li>
+                  In the phone system&apos;s own admin area, find <strong>Settings →
+                  API / Integrations / Developer</strong> and create an{" "}
+                  <strong>API key</strong> (the hint under the provider dropdown
+                  says where). You need admin rights there.
+                </li>
+                <li>
+                  Enter the key in the form below and save. Credentials are stored
+                  encrypted and never shown again — do not send them by email or
+                  chat; this form is the only place they belong.
+                </li>
+                <li>
+                  After saving, a <strong>webhook secret is shown exactly once</strong> —
+                  copy it and keep it safe. It is needed when call events are
+                  switched on.
+                </li>
+                <li>
+                  Leave <strong>inbound and outbound switched off</strong> for now.
+                  They are enabled step by step once the connection is verified;
+                  calls then appear on the matching leads automatically.
+                </li>
+              </ol>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5">
+              <p className="mb-3 text-xs text-muted-foreground">
+                Connect the organisation&apos;s phone system. Credentials are stored
+                encrypted and never displayed again; call features stay off until
+                the provider adapter is enabled and the stage gates above are
+                switched on. The CRM matches calls to leads by phone number once
+                inbound events flow.
+              </p>
+              <TelephonyConnectForm />
             </CardContent>
           </Card>
         </div>
