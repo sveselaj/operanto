@@ -45,6 +45,13 @@ if (await tokenField.isVisible().catch(() => false)) {
 await page.waitForURL("**/dashboard", { timeout: 20_000 });
 console.log("LOGIN OK");
 
+await page.goto("http://localhost:3000/integrations");
+await page.getByText("Telephony", { exact: true }).waitFor({ timeout: 20_000 });
+await page.locator("#telephony-provider").selectOption("twilio");
+await page.getByLabel("Account SID").waitFor({ timeout: 5_000 });
+await page.screenshot({ path: `${OUT}/oi-voice-settings.png` });
+console.log("TELEPHONY FORM OK — provider fields adapt");
+
 await page.goto("http://localhost:3000/crm/leads");
 console.log("LANDED AT:", page.url());
 await page.getByRole("heading", { name: "Leads" }).waitFor({ timeout: 20_000 });

@@ -102,6 +102,7 @@ model Organisation {
   growthImports            GrowthImport[]
   leads                    Lead[]
   leadStatusHistories      LeadStatusHistory[]
+  telephonyConnections     TelephonyConnection[]
 }
 
 model User {
@@ -1611,4 +1612,39 @@ model LeadStatusHistory {
   changedBy    Membership?  @relation("LeadStatusChanger", fields: [changedByMembershipId], references: [id], onDelete: SetNull)
 
   @@index([leadId, createdAt])
+}
+
+/// Per-organisation telephony (phone-system) connection — provider-neutral
+/// settings storage (OI voice slice 1). Credentials are encrypted at rest
+/// with OPERANTO_ENCRYPTION_KEY and never returned to the UI or written to
+/// audit metadata. Which fields a provider needs is defined in
+/// src/lib/telephony-providers.ts; call/webhook behavior arrives with the
+/// provider adapter (packages/crm-voice contracts).
+model TelephonyConnection {
+  id             String @id @default(cuid())
+  organisationId String
+  /// Catalog id from telephony-providers.ts (e.g. "cloudtalk", "twilio").
+  provider       String
+  displayName    String
+  /// Non-secret provider account/tenant reference (e.g. Twilio Account SID).
+  accountRef     String?
+  apiKeyEncrypted    String?
+  apiSecretEncrypted String?
+  /// Signing secret WE generate for the provider's webhook configuration;
+  /// shown once at connect time, verified by the future webhook route.
+  webhookSecretEncrypted String?
+  status ChannelConnectionStatus @default(ACTIVE)
+  /// Stage gates, both default OFF (connect → verify → inbound → outbound).
+  inboundEnabled  Boolean @default(false)
+  outboundEnabled Boolean @default(false)
+  lastVerifiedAt DateTime?
+  lastEventAt    DateTime?
+  lastError      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, provider, displayName])
+  @@index([organisationId])
 }

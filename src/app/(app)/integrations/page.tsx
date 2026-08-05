@@ -12,6 +12,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/format";
 import { WhatsAppConnectForm } from "./whatsapp-connect-form";
+import { TelephonyConnectForm } from "./telephony-connect-form";
+import { disableTelephonyAction, setTelephonyGatesAction } from "./telephony-actions";
+import { voiceEnabled } from "@/lib/voice-flag";
+import { listTelephonyConnections } from "@/lib/services/telephony";
+import { telephonyProvider } from "@/lib/telephony-providers";
 import {
   createTemplateAction,
   setStageGateAction,
@@ -32,6 +37,10 @@ export default async function IntegrationsPage() {
         orderBy: [{ type: "asc" }, { displayName: "asc" }],
       })
     : [];
+  const telephonyConnections =
+    voiceEnabled() && can(ctx.membership.role, "channels:manage")
+      ? await listTelephonyConnections(ctx)
+      : [];
   const templates = can(ctx.membership.role, "templates:manage")
     ? await prisma.messageTemplate.findMany({
         where: scope(ctx),
@@ -211,6 +220,95 @@ export default async function IntegrationsPage() {
                   Add template
                 </Button>
               </form>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
+      {voiceEnabled() && can(ctx.membership.role, "channels:manage") ? (
+        <div className="mt-6 max-w-xl">
+          <h2 className="mb-2 text-sm font-semibold">Telephony</h2>
+          {telephonyConnections.length > 0 ? (
+            <div className="mb-3 divide-y divide-border rounded-lg border border-border bg-card">
+              {telephonyConnections.map((connection) => (
+                <div key={connection.id} className="px-4 py-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{connection.displayName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {telephonyProvider(connection.provider)?.label ?? connection.provider}
+                        {connection.accountRef ? ` · ${connection.accountRef}` : ""}
+                        {" · connected "}
+                        {formatDateTime(connection.createdAt)}
+                        {connection.lastError ? ` · error: ${connection.lastError}` : ""}
+                      </p>
+                    </div>
+                    <Badge variant={connection.status === "ACTIVE" ? "default" : "danger"}>
+                      {connection.status}
+                    </Badge>
+                  </div>
+                  {connection.status === "ACTIVE" ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Badge variant={connection.inboundEnabled ? "default" : "outline"}>
+                        inbound {connection.inboundEnabled ? "on" : "off"}
+                      </Badge>
+                      <Badge variant={connection.outboundEnabled ? "default" : "outline"}>
+                        outbound {connection.outboundEnabled ? "on" : "off"}
+                      </Badge>
+                      <form action={setTelephonyGatesAction}>
+                        <input type="hidden" name="connectionId" value={connection.id} />
+                        <input
+                          type="hidden"
+                          name="inboundEnabled"
+                          value={connection.inboundEnabled ? "0" : "1"}
+                        />
+                        <input
+                          type="hidden"
+                          name="outboundEnabled"
+                          value={connection.outboundEnabled ? "1" : "0"}
+                        />
+                        <Button type="submit" variant="outline" size="sm">
+                          {connection.inboundEnabled ? "Disable inbound" : "Enable inbound"}
+                        </Button>
+                      </form>
+                      <form action={setTelephonyGatesAction}>
+                        <input type="hidden" name="connectionId" value={connection.id} />
+                        <input
+                          type="hidden"
+                          name="inboundEnabled"
+                          value={connection.inboundEnabled ? "1" : "0"}
+                        />
+                        <input
+                          type="hidden"
+                          name="outboundEnabled"
+                          value={connection.outboundEnabled ? "0" : "1"}
+                        />
+                        <Button type="submit" variant="outline" size="sm">
+                          {connection.outboundEnabled ? "Disable outbound" : "Enable outbound"}
+                        </Button>
+                      </form>
+                      <form action={disableTelephonyAction}>
+                        <input type="hidden" name="connectionId" value={connection.id} />
+                        <Button type="submit" variant="outline" size="sm">
+                          Disconnect
+                        </Button>
+                      </form>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <Card>
+            <CardContent className="pt-5">
+              <p className="mb-3 text-xs text-muted-foreground">
+                Connect the organisation&apos;s phone system. Credentials are stored
+                encrypted and never displayed again; call features stay off until
+                the provider adapter is enabled and the stage gates above are
+                switched on. The CRM matches calls to leads by phone number once
+                inbound events flow.
+              </p>
+              <TelephonyConnectForm />
             </CardContent>
           </Card>
         </div>
