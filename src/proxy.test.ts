@@ -1,6 +1,8 @@
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { proxy } from "@/proxy";
+import { COCKPIT_PREFIXES, proxy } from "@/proxy";
 
 function req(url: string, host?: string): NextRequest {
   return new NextRequest(url, {
@@ -151,5 +153,25 @@ describe("unconfigured single-host dev", () => {
   it("is a no-op", () => {
     stubEnv({ NEXT_PUBLIC_SITE_URL: "", NEXT_PUBLIC_APP_URL: "", NEXT_PUBLIC_API_URL: "" });
     expect(proxy(req("http://localhost:3000/dashboard", "localhost:3000")).status).toBe(200);
+  });
+});
+
+describe("cockpit prefix coverage", () => {
+  it("registers every route group under (app)", () => {
+    // A cockpit area missing from COCKPIT_PREFIXES renders on the marketing
+    // host and on unknown hosts instead of redirecting to the canonical app
+    // host. This caught /crm and /notifications (OI-3/OI-4) and the older
+    // /conversations and /growth areas.
+    const appDir = join(__dirname, "app", "(app)");
+    const areas = readdirSync(appDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      // Route groups "(x)" and dynamic segments "[x]" are not URL prefixes.
+      .map((entry) => entry.name)
+      .filter((name) => !name.startsWith("(") && !name.startsWith("["));
+
+    const uncovered = areas.filter(
+      (area) => !COCKPIT_PREFIXES.includes(`/${area}`),
+    );
+    expect(uncovered).toEqual([]);
   });
 });
