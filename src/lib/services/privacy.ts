@@ -139,6 +139,24 @@ export async function eraseCustomer(
           where: { ...scope(ctx), leadId: { in: leadIds } },
           data: { title: ERASED_TEXT, description: null },
         });
+        // Call history (OI-4): the dialled number IS the personal datum, and
+        // the free-text note routinely quotes the person. The attempt row
+        // survives as evidence that a call happened, without its content.
+        await tx.callAttempt.updateMany({
+          where: { ...scope(ctx), leadId: { in: leadIds } },
+          data: { dialedNumber: ERASED_TEXT, rawPhone: null, note: null },
+        });
+        // Work locks hold no personal data, but an open session on an erased
+        // lead must not keep anyone in the call workspace.
+        await tx.leadWorkLock.updateMany({
+          where: { leadId: { in: leadIds }, releasedAt: null },
+          data: { releasedAt: new Date(), releaseReason: "EXPIRED" },
+        });
+        // Notifications carry the person's name in metadata and point at the
+        // lead; they are disposable operational signals, so they are deleted.
+        await tx.notification.deleteMany({
+          where: { ...scope(ctx), entityType: "Lead", entityId: { in: leadIds } },
+        });
       }
 
       // 3. Timeline. Summaries are human-readable and often quote the person;

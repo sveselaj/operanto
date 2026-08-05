@@ -45,6 +45,26 @@ if (await tokenField.isVisible().catch(() => false)) {
 await page.waitForURL("**/dashboard", { timeout: 20_000 });
 console.log("LOGIN OK");
 
+// OI-4 surfaces: work queue, call workspace, notification bell.
+await page.goto("http://localhost:3000/crm/queue");
+await page.getByRole("heading", { name: "Work queue" }).waitFor({ timeout: 30_000 });
+await page.screenshot({ path: `${OUT}/oi4-work-queue.png` });
+console.log("QUEUE OK — entries:", await page.locator("ol li").count());
+
+await page.goto("http://localhost:3000/crm/leads");
+await page.getByRole("link", { name: "Arta Muster (Demo)" }).click();
+await page.getByRole("button", { name: /^Call / }).waitFor({ timeout: 30_000 });
+await page.getByRole("button", { name: /^Call / }).click();
+await page.getByLabel("Outcome").waitFor({ timeout: 30_000 });
+await page.getByLabel("Outcome").selectOption("NO_ANSWER");
+await page.getByLabel("Follow-up").waitFor({ timeout: 5_000 });
+await page.screenshot({ path: `${OUT}/oi4-call-workspace.png` });
+console.log("CALL WORKSPACE OK — follow-up options:", await page.getByLabel("Follow-up").locator("option").allTextContents());
+
+await page.goto("http://localhost:3000/notifications");
+await page.getByRole("heading", { name: "Notifications" }).waitFor({ timeout: 30_000 });
+console.log("NOTIFICATIONS PAGE OK; bell visible:", await page.getByLabel(/Notifications/).first().isVisible());
+
 await page.goto("http://localhost:3000/integrations");
 await page.getByText("Telephony", { exact: true }).waitFor({ timeout: 20_000 });
 await page.locator("#telephony-provider").selectOption("twilio");

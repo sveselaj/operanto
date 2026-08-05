@@ -20,6 +20,12 @@ export default defineConfig({
     include: ["test/**/*.integration.test.ts"],
     exclude: ["**/node_modules/**"],
     fileParallelism: false,
+    // The per-test TRUNCATE ... CASCADE now clears the CRM tables too, and it
+    // waits for locks from the previous file's connections. Vitest's 10 s
+    // default hook timeout turned that into a flake; these bounds are still
+    // short enough that a genuinely stuck test fails rather than hangs.
+    hookTimeout: 60_000,
+    testTimeout: 30_000,
   },
   resolve: { alias: testAliases },
 });

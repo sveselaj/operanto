@@ -12,7 +12,7 @@ import {
   Users,
 } from "lucide-react";
 import type { MembershipRole } from "@prisma/client";
-import { Phone } from "lucide-react";
+import { ListChecks, Phone } from "lucide-react";
 import { can } from "@/lib/rbac";
 
 const CORE_ITEMS = [
@@ -35,7 +35,10 @@ export function Sidebar({
 }) {
   const crmItems =
     crm && can(role, "crm.view")
-      ? [{ href: "/crm/leads", label: "Leads", icon: Phone }]
+      ? [
+          { href: "/crm/queue", label: "Work queue", icon: ListChecks },
+          { href: "/crm/leads", label: "Leads", icon: Phone },
+        ]
       : [];
   const growthItems =
     growth && can(role, "growth:view")

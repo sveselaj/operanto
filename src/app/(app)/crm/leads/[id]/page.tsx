@@ -13,6 +13,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { formatDateTime, formatStage } from "@/lib/format";
 import { assignLeadAction, transitionLeadAction } from "./actions";
+import { CallWorkspace } from "./call-workspace";
+import { lockedByOther } from "@/lib/services/crm/locks";
 
 export const metadata: Metadata = { title: "Lead" };
 
@@ -27,6 +29,15 @@ export default async function LeadDetailPage({ params }: PageProps<"/crm/leads/[
   const targets = allowedTransitions(lead.status);
   const needsExtras = targets.some((t) => requiresReason(t) || requiresSchedule(t));
   const members = canAssign ? await listAssignableMembers(ctx) : [];
+  const canCall = can(ctx.membership.role, "crm.calls.start");
+  const heldByOther = await lockedByOther(ctx, lead.id);
+  const callBlockedReason = lead.doNotCall
+    ? "Do not contact — calling is blocked for this lead."
+    : heldByOther
+      ? "Another member is working this lead right now."
+      : lead.phoneStatus === "MISSING" || lead.phoneStatus === "INVALID"
+        ? "No usable phone number — correct it before calling."
+        : undefined;
 
   return (
     <>
@@ -91,6 +102,22 @@ export default async function LeadDetailPage({ params }: PageProps<"/crm/leads/[
               ) : null}
             </CardContent>
           </Card>
+
+          {canCall ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Call</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CallWorkspace
+                  leadId={lead.id}
+                  leadName={lead.fullName}
+                  callable={!callBlockedReason}
+                  blockedReason={callBlockedReason}
+                />
+              </CardContent>
+            </Card>
+          ) : null}
 
           <Card>
             <CardHeader>
