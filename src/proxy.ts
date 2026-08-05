@@ -23,12 +23,22 @@ import { NextResponse, type NextRequest } from "next/server";
  * worst render the marketing shell.
  */
 
-const COCKPIT_PREFIXES = [
+/**
+ * Every cockpit path prefix. A missing entry is not cosmetic: the path would
+ * render on the marketing host and on unknown hosts instead of redirecting to
+ * the canonical app host. `src/proxy.test.ts` asserts this list covers every
+ * route group under `src/app/(app)`, so a new area cannot forget to register.
+ */
+export const COCKPIT_PREFIXES = [
   "/dashboard",
+  "/conversations",
   "/customers",
   "/opportunities",
   "/tasks",
   "/activity",
+  "/crm",
+  "/notifications",
+  "/growth",
   "/integrations",
   "/settings",
   "/audit",
