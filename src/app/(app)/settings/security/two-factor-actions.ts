@@ -5,7 +5,10 @@ import { requireOrgAllowingEnrolment } from "@/lib/org-context";
 import { audit } from "@/lib/audit";
 import {
   beginTwoFactorEnrolment,
+  beginTwoFactorRotation,
+  cancelTwoFactorRotation,
   confirmTwoFactorEnrolment,
+  confirmTwoFactorRotation,
   disableTwoFactor,
 } from "@/lib/services/two-factor";
 
@@ -69,4 +72,53 @@ export async function disableTwoFactorAction(
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Could not turn off" };
   }
+}
+
+/**
+ * Rotation: replace an active authenticator (lost, shared or compromised)
+ * without ever turning 2FA off — the only path available to roles that may
+ * not disable it at all.
+ */
+export async function beginRotationAction(
+  _prev: EnrolmentState | null,
+  formData: FormData,
+): Promise<EnrolmentState> {
+  const ctx = await requireOrgAllowingEnrolment();
+  try {
+    const { secret, uri } = await beginTwoFactorRotation(
+      ctx.user.id,
+      String(formData.get("token") ?? ""),
+    );
+    return { secret, uri };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Could not start rotation" };
+  }
+}
+
+export async function confirmRotationAction(
+  _prev: EnrolmentState | null,
+  formData: FormData,
+): Promise<EnrolmentState> {
+  const ctx = await requireOrgAllowingEnrolment();
+  try {
+    const { recoveryCodes } = await confirmTwoFactorRotation(
+      ctx.user.id,
+      String(formData.get("token") ?? ""),
+    );
+    await audit(ctx, {
+      eventType: "user.two_factor_rotated",
+      targetType: "User",
+      targetId: ctx.user.id,
+    });
+    revalidatePath("/settings/security");
+    return { recoveryCodes, done: true };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Rotation failed" };
+  }
+}
+
+export async function cancelRotationAction(): Promise<void> {
+  const ctx = await requireOrgAllowingEnrolment();
+  await cancelTwoFactorRotation(ctx.user.id);
+  revalidatePath("/settings/security");
 }

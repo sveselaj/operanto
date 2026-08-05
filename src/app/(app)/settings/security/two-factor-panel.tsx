@@ -6,7 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   beginEnrolmentAction,
+  beginRotationAction,
+  cancelRotationAction,
   confirmEnrolmentAction,
+  confirmRotationAction,
   disableTwoFactorAction,
   type EnrolmentState,
 } from "./two-factor-actions";
@@ -29,8 +32,35 @@ export function TwoFactorPanel({
     EnrolmentState | null,
     FormData
   >(disableTwoFactorAction, null);
+  const [rotateState, rotateAction, rotating] = useActionState<
+    EnrolmentState | null,
+    FormData
+  >(beginRotationAction, null);
+  const [rotateConfirmState, rotateConfirmAction, rotateConfirming] = useActionState<
+    EnrolmentState | null,
+    FormData
+  >(confirmRotationAction, null);
 
-  // Shown once, immediately after enrolment — never retrievable afterwards.
+  // Shown once, immediately after enrolment/rotation — never retrievable after.
+  if (rotateConfirmState?.recoveryCodes) {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-success">
+          New authenticator active. The previous one no longer works.
+        </p>
+        <p className="text-sm">
+          These replacement recovery codes invalidate the old ones. Save them
+          somewhere safe — they will not be shown again.
+        </p>
+        <ul className="grid grid-cols-2 gap-1 rounded-md border border-border bg-muted p-3 font-mono text-sm">
+          {rotateConfirmState.recoveryCodes.map((code) => (
+            <li key={code}>{code}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
   if (confirmState?.recoveryCodes) {
     return (
       <div className="space-y-3">
@@ -59,6 +89,57 @@ export function TwoFactorPanel({
           {recoveryCodesRemaining} recovery code
           {recoveryCodesRemaining === 1 ? "" : "s"} remaining.
         </p>
+        {rotateState?.secret ? (
+          <div className="space-y-2 rounded-md border border-border p-3">
+            <p className="font-medium">Scan with the NEW authenticator</p>
+            <p className="text-xs text-muted-foreground">
+              Add this key in the new app, then confirm with the code it shows.
+              Your current authenticator keeps working until you confirm.
+            </p>
+            <code className="block break-all rounded bg-muted px-2 py-1 text-xs">
+              {rotateState.secret}
+            </code>
+            <form action={rotateConfirmAction} className="space-y-2">
+              <Input name="token" placeholder="Code from the new app" required />
+              <div className="flex gap-2">
+                <Button type="submit" variant="outline" size="sm" disabled={rotateConfirming}>
+                  {rotateConfirming ? "Confirming…" : "Confirm new authenticator"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void cancelRotationAction()}
+                >
+                  Cancel
+                </Button>
+              </div>
+              {rotateConfirmState?.error ? (
+                <p role="alert" className="text-xs text-danger">
+                  {rotateConfirmState.error}
+                </p>
+              ) : null}
+            </form>
+          </div>
+        ) : (
+          <form action={rotateAction} className="space-y-2 rounded-md border border-border p-3">
+            <p className="font-medium">Replace authenticator</p>
+            <p className="text-xs text-muted-foreground">
+              Lost your phone, or this account was set up with a shared or test
+              secret? Prove the current factor (a recovery code works too) and
+              you will get a fresh key to scan.
+            </p>
+            <Input name="token" placeholder="Current code or recovery code" required />
+            <Button type="submit" variant="outline" size="sm" disabled={rotating}>
+              {rotating ? "Starting…" : "Replace authenticator"}
+            </Button>
+            {rotateState?.error ? (
+              <p role="alert" className="text-xs text-danger">
+                {rotateState.error}
+              </p>
+            ) : null}
+          </form>
+        )}
         {required ? (
           <p className="text-muted-foreground">
             Your role requires two-factor authentication, so it cannot be turned

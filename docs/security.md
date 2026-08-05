@@ -1,5 +1,36 @@
 # Security
 
+
+## Second-factor rotation
+
+An active authenticator can be **replaced without ever turning 2FA off** —
+the only path available to ADMIN/SUPERVISOR/AUDITOR, whose roles may not
+disable it at all. Before this existed, a lost, shared or compromised
+authenticator on a privileged account could only be fixed by editing the
+database by hand.
+
+Flow (Settings → Security → *Replace authenticator*):
+
+1. Prove the **current** factor — a TOTP code or a recovery code (the
+   documented path when the phone is gone). Rate-limited like every other
+   second-factor check, fail-closed.
+2. A candidate secret is issued into a **separate pending slot**; the active
+   secret keeps working, so the account is never locked out or unprotected
+   mid-rotation. Abandoning the flow changes nothing.
+3. Confirm with a code from the **new** authenticator. Only then is the
+   pending secret promoted, the replay counter reset, and a **fresh set of
+   recovery codes** issued — the previous codes are invalidated, because a
+   compromised enrolment's recovery codes are as dangerous as its secret.
+
+Audited as `user.two_factor_rotated`. Covered by integration tests including
+the mid-rotation old-secret-still-works case, old-secret-and-old-recovery-
+codes-rejected after promotion, cancellation, and availability to the roles
+that cannot disable 2FA.
+
+**Operational note:** any account enrolled with a shared or fixture secret
+(e.g. seeded with `SEED_TEST_TOTP_SECRET` for acceptance testing) should be
+rotated to a private authenticator through this flow before real use.
+
 ## Permission matrix
 
 Permissions are granted per organisation through the membership role

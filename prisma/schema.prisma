@@ -125,6 +125,11 @@ model User {
   /// Highest TOTP counter already accepted. Without it a code stays usable
   /// for its whole ~90 s window and an observed code can be replayed.
   totpLastCounter     BigInt?
+  /// Candidate secret during a ROTATION (lost or compromised authenticator).
+  /// Held separately so the ACTIVE secret keeps working until the new one is
+  /// proved — a rotation must never leave a privileged account locked out or
+  /// unprotected mid-flight.
+  totpPendingSecretEncrypted String?
   lastLoginAt       DateTime?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt

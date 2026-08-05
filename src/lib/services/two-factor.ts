@@ -180,15 +180,86 @@ export async function disableTwoFactor(
   });
 }
 
+/**
+ * Begin a ROTATION of an active second factor — the path for a lost, shared
+ * or compromised authenticator. Requires proving the CURRENT factor (TOTP or
+ * a recovery code), then issues a candidate secret into a separate pending
+ * slot: the active secret keeps working until the new one is proved, so a
+ * privileged account (which may not turn 2FA off at all) is never locked out
+ * or left unprotected mid-rotation.
+ */
+export async function beginTwoFactorRotation(
+  userId: string,
+  currentToken: string,
+): Promise<{ secret: string; uri: string }> {
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+  if (!user.totpConfirmedAt) {
+    throw new Error("Two-factor authentication is not active; enrol instead.");
+  }
+  const verified = await verifySecondFactor(userId, currentToken);
+  if (!verified) {
+    throw new Error("Enter a valid current code (or a recovery code) to rotate.");
+  }
+
+  const secret = generateTotpSecret();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { totpPendingSecretEncrypted: encryptSecret(secret) },
+  });
+  return { secret, uri: totpEnrolmentUri({ secret, accountEmail: user.email }) };
+}
+
+/**
+ * Complete a rotation by proving a code from the NEW authenticator. Promotes
+ * the pending secret, resets the replay counter, and issues fresh recovery
+ * codes — the old ones are invalidated, because a compromised enrolment's
+ * recovery codes are exactly as dangerous as its secret.
+ */
+export async function confirmTwoFactorRotation(
+  userId: string,
+  token: string,
+): Promise<{ recoveryCodes: string[] }> {
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+  if (!user.totpPendingSecretEncrypted) throw new Error("Start the rotation first");
+
+  const result = verifyTotp(decryptSecret(user.totpPendingSecretEncrypted), token);
+  if (!result.valid) {
+    throw new Error("That code is not valid. Use the code from the NEW authenticator.");
+  }
+
+  const recoveryCodes = generateRecoveryCodes();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      totpSecretEncrypted: user.totpPendingSecretEncrypted,
+      totpPendingSecretEncrypted: null,
+      totpConfirmedAt: new Date(),
+      totpLastCounter: BigInt(result.counter ?? 0),
+      recoveryCodeHashes: recoveryCodes.map(hashRecoveryCode),
+    },
+  });
+  return { recoveryCodes };
+}
+
+/** Abandon a started rotation; the active authenticator is untouched. */
+export async function cancelTwoFactorRotation(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { totpPendingSecretEncrypted: null },
+  });
+}
+
 export async function twoFactorStatus(userId: string): Promise<{
   active: boolean;
   enrolmentStarted: boolean;
+  rotationStarted: boolean;
   recoveryCodesRemaining: number;
 }> {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   return {
     active: Boolean(user.totpConfirmedAt),
     enrolmentStarted: Boolean(user.totpSecretEncrypted) && !user.totpConfirmedAt,
+    rotationStarted: Boolean(user.totpPendingSecretEncrypted),
     recoveryCodesRemaining: user.recoveryCodeHashes.length,
   };
 }

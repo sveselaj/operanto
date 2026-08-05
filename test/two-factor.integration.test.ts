@@ -28,8 +28,15 @@ vi.stubEnv("OPERANTO_ENCRYPTION_KEY", "a".repeat(64));
 const { encryptSecret } = await import("@/lib/crypto");
 const { generateTotp, generateTotpSecret, normaliseRecoveryCode } =
   await import("@/lib/totp");
-const { disableTwoFactor, roleRequiresTwoFactor, verifySecondFactor } =
-  await import("@/lib/services/two-factor");
+const {
+  beginTwoFactorRotation,
+  cancelTwoFactorRotation,
+  confirmTwoFactorRotation,
+  disableTwoFactor,
+  roleRequiresTwoFactor,
+  twoFactorStatus,
+  verifySecondFactor,
+} = await import("@/lib/services/two-factor");
 
 const hashRecoveryCode = (code: string) =>
   createHash("sha256").update(normaliseRecoveryCode(code)).digest("hex");
@@ -202,5 +209,78 @@ describeDb("disabling 2FA", () => {
     expect(after.totpConfirmedAt).toBeNull();
     expect(after.totpLastCounter).toBeNull();
     expect(after.recoveryCodeHashes).toHaveLength(0);
+  });
+});
+
+describeDb("second-factor rotation (lost/compromised authenticator)", () => {
+  it("replaces the secret only after the NEW code is proved", async () => {
+    const { user, secret } = await enrolledUser();
+    const { secret: pending } = await beginTwoFactorRotation(
+      user.id,
+      generateTotp(secret),
+    );
+    expect(pending).not.toBe(secret);
+
+    // Mid-rotation: the OLD authenticator still works, so a privileged account
+    // is never locked out while the new app is being set up.
+    expect(await verifySecondFactor(user.id, generateTotp(secret, new Date(Date.now() + 30_000)))).toBe(true);
+    expect((await twoFactorStatus(user.id)).rotationStarted).toBe(true);
+
+    const { recoveryCodes } = await confirmTwoFactorRotation(
+      user.id,
+      generateTotp(pending),
+    );
+    expect(recoveryCodes.length).toBeGreaterThan(0);
+
+    // After promotion the OLD authenticator no longer opens the door (checked
+    // first, so the replay guard cannot be what rejects it) and the NEW one does.
+    // Codes are only valid within one step, hence +30 s and not further.
+    const nextStep = new Date(Date.now() + 30_000);
+    expect(await verifySecondFactor(user.id, generateTotp(secret, nextStep))).toBe(false);
+    expect(await verifySecondFactor(user.id, generateTotp(pending, nextStep))).toBe(true);
+    expect((await twoFactorStatus(user.id)).rotationStarted).toBe(false);
+  });
+
+  it("invalidates the previous recovery codes", async () => {
+    const { user, secret } = await enrolledUser();
+    const { secret: pending } = await beginTwoFactorRotation(user.id, generateTotp(secret));
+    await confirmTwoFactorRotation(user.id, generateTotp(pending));
+    // An old recovery code from the compromised enrolment must not work.
+    expect(await verifySecondFactor(user.id, RECOVERY[0])).toBe(false);
+  });
+
+  it("refuses to start without a valid current factor, and accepts a recovery code", async () => {
+    const { user, secret } = await enrolledUser();
+    await expect(beginTwoFactorRotation(user.id, "000000")).rejects.toThrow(/valid current code/);
+    // A recovery code is the documented path when the authenticator is gone.
+    const started = await beginTwoFactorRotation(user.id, RECOVERY[1]);
+    expect(started.secret).not.toBe(secret);
+  });
+
+  it("cancels cleanly, leaving the active authenticator untouched", async () => {
+    const { user, secret } = await enrolledUser();
+    await beginTwoFactorRotation(user.id, generateTotp(secret));
+    await cancelTwoFactorRotation(user.id);
+    expect((await twoFactorStatus(user.id)).rotationStarted).toBe(false);
+    expect(await verifySecondFactor(user.id, generateTotp(secret, new Date(Date.now() + 30_000)))).toBe(true);
+  });
+
+  it("is available to roles that may never disable 2FA", async () => {
+    const { user, secret } = await enrolledUser();
+    for (const role of ["ADMIN", "SUPERVISOR", "AUDITOR"] as const) {
+      expect(roleRequiresTwoFactor(role)).toBe(true);
+      await expect(disableTwoFactor(user.id, generateTotp(secret), role)).rejects.toThrow(
+        /cannot be turned off/,
+      );
+    }
+    // …but rotation works for exactly those accounts.
+    const { secret: pending } = await beginTwoFactorRotation(
+      user.id,
+      generateTotp(secret, new Date(Date.now() + 30_000)),
+    );
+    await confirmTwoFactorRotation(user.id, generateTotp(pending));
+    expect(
+      await verifySecondFactor(user.id, generateTotp(pending, new Date(Date.now() + 30_000))),
+    ).toBe(true);
   });
 });
