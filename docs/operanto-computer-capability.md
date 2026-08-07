@@ -38,6 +38,17 @@ explicit authorization.
 > and cannot click it. See `docs/operanto-computer-c3.md`. C4 (any
 > browser-side effect) remains unauthorized.
 
+> **C4 addendum (2026-08-07):** safe single navigation was separately
+> authorized and delivered, flag-gated off — the FIRST browser-side
+> effect, deliberately minimal: one approved same-origin anchor opening
+> per fresh observation, then stop. Snapshot-scoped ephemeral element
+> identity, unified ApprovalRequest, one-shot short-lived execution
+> nonce on a separate action channel, extension-side independent
+> re-enforcement of the safe-link policy, and server-side verification
+> from a fresh post-navigation snapshot. R3/R4 remain unexecutable; no
+> loops, buttons, typing or submissions exist. See
+> `docs/operanto-computer-c4.md`.
+
 ## 1. Problem statement
 
 A large share of the work Operanto is asked to complete lives inside

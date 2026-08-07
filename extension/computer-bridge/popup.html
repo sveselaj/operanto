@@ -26,6 +26,15 @@
       <button id="capture">Share this tab</button>
       <button id="detach">Detach</button>
     </div>
+    <label for="nonce">One-shot execution code (optional, C4)</label>
+    <input
+      id="nonce"
+      type="password"
+      placeholder="paste only after approving a navigation in Operanto"
+    />
+    <div>
+      <button id="navigate">Open the approved link once</button>
+    </div>
     <div id="status"></div>
     <script src="popup.js" type="module"></script>
   </body>

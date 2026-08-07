@@ -9,6 +9,10 @@ import {
   detachComputerBridge,
 } from "@/lib/services/computer";
 import { runComputerAiTask } from "@/lib/services/computer-understanding";
+import {
+  issueNavigationNonce,
+  proposeSafeNavigation,
+} from "@/lib/services/computer-navigation";
 import { AIError } from "@/lib/ai/types";
 
 function errorMessage(error: unknown): string {
@@ -78,6 +82,34 @@ export async function analyzeAction(formData: FormData) {
       { question },
     ),
   );
+}
+
+/** C4: propose ONE navigation to a safe link observed in the fresh snapshot. */
+export async function proposeNavigationAction(formData: FormData) {
+  const ctx = await requireOrg();
+  const sessionId = String(formData.get("sessionId") ?? "");
+  const ref = String(formData.get("targetRef") ?? "");
+  const reason = String(formData.get("reason") ?? "").trim() || "Inspect this page";
+  await runControl(sessionId, () =>
+    proposeSafeNavigation(ctx, sessionId, { ref }, reason),
+  );
+}
+
+/**
+ * C4: mint the one-shot execution code for an APPROVED navigation. Returned
+ * once to this operator's browser for the extension — never stored raw,
+ * never audited, never in a URL.
+ */
+export async function issueNavigationCodeAction(
+  actionId: string,
+): Promise<{ nonce?: string; expiresAt?: string; error?: string }> {
+  const ctx = await requireOrg();
+  try {
+    const issued = await issueNavigationNonce(ctx, actionId);
+    return { nonce: issued.nonce, expiresAt: issued.expiresAt.toISOString() };
+  } catch (error) {
+    return { error: errorMessage(error) };
+  }
 }
 
 export async function cancelSessionAction(formData: FormData) {

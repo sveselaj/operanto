@@ -15,7 +15,7 @@ Operanto
 ├── Conversations   channels → normalized messages → unified inbox → handover
 ├── Workflows       tasks, approvals, escalations, (later) workflow definitions
 ├── Intelligence    AI tasks + typed tool gateway + approval gates + AIAction audit
-├── Computer        governed operation of software UIs where no API suffices (C0: docs only)
+├── Computer        governed observation, understanding and (C4) one approved navigation of software UIs
 ├── Growth          brand profile, campaigns, content — on shared context
 └── Integrations    signed domain events (Pronatona, …) + channel connectors
 ```
@@ -368,3 +368,12 @@ inference vs guidance separation, minimal /computer workbench.
 Guidance only: Operanto explains pages and recommends where the HUMAN
 should look; no browser-side effect exists. See
 docs/operanto-computer-c3.md.
+
+Computer C4 delivered (same date, separately authorized): safe single
+navigation, flag-gated off (OPERANTO_COMPUTER_NAVIGATION_ENABLED,
+requires bridge + guide) — the first browser-side effect, bounded to ONE
+approved same-origin anchor opening per fresh observation. Ephemeral
+snapshot-scoped element identity, unified approval gate, one-shot
+execution nonce, extension-side independent policy enforcement,
+server-computed verification, then STOP. No loops, clicks, typing or
+submissions. See docs/operanto-computer-c4.md.

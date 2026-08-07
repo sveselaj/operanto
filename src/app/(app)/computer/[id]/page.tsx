@@ -10,8 +10,16 @@ import type {
 } from "@/lib/ai/computer-tasks";
 import { PageHeader } from "@/components/app/page-header";
 import { formatDateTime } from "@/lib/format";
+import { computerNavigationEnabled } from "@/lib/computer-flag";
+import type { SafeLink } from "@/lib/computer/safe-link";
 import { BridgePanel } from "./bridge-panel";
-import { analyzeAction, cancelSessionAction, detachBridgeAction } from "./actions";
+import { NavigationCodePanel } from "./navigation-panel";
+import {
+  analyzeAction,
+  cancelSessionAction,
+  detachBridgeAction,
+  proposeNavigationAction,
+} from "./actions";
 
 export const metadata: Metadata = { title: "Computer session" };
 
@@ -108,6 +116,12 @@ export default async function ComputerSessionPage({
     (bridge) => bridge.status === "PENDING" || bridge.status === "ATTACHED",
   );
   const open = ["CREATED", "PLANNING", "READY"].includes(session.status);
+  const navigationEnabled = computerNavigationEnabled();
+  const latestSnapshot = session.snapshots[session.snapshots.length - 1];
+  const safeLinks = (latestSnapshot?.safeLinksJson ?? []) as SafeLink[];
+  const navigations = session.actions.filter(
+    (action) => action.actionType === "OPEN_SAFE_LINK",
+  );
 
   return (
     <>
@@ -171,6 +185,69 @@ export default async function ComputerSessionPage({
               ))
             )}
           </ul>
+
+          {navigationEnabled ? (
+            <>
+              <h2 className="text-sm font-semibold">Navigation (one approved step)</h2>
+              {open && safeLinks.length > 0 ? (
+                <form
+                  action={proposeNavigationAction}
+                  className="space-y-2 rounded-md border p-3 text-sm"
+                >
+                  <input type="hidden" name="sessionId" value={session.id} />
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-muted-foreground">
+                      Safe same-origin links observed in the latest capture
+                    </span>
+                    <select
+                      name="targetRef"
+                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    >
+                      {safeLinks.map((link) => (
+                        <option key={link.ref} value={link.ref}>
+                          {link.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <input
+                    name="reason"
+                    maxLength={1000}
+                    placeholder="Why open this link?"
+                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                  />
+                  <button className="h-9 rounded-md border border-input px-3 text-sm font-medium hover:bg-muted">
+                    Propose opening this link (needs approval)
+                  </button>
+                </form>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {open
+                    ? "No safe same-origin links in the latest capture."
+                    : "Session is closed."}
+                </p>
+              )}
+              {navigations.length > 0 ? (
+                <ul className="divide-y rounded-md border text-sm">
+                  {navigations.map((action) => (
+                    <li key={action.id} className="px-3 py-2">
+                      <span className="mr-2 rounded bg-muted px-1.5 py-0.5 text-xs">
+                        {action.status}
+                      </span>
+                      {(action.targetJson as { name?: string } | null)?.name ?? "link"}
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {action.expectedOrigin} · verification{" "}
+                        {action.verificationResult}
+                      </span>
+                      {action.status === "APPROVED" ? (
+                        <NavigationCodePanel actionId={action.id} />
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : null}
 
           {open ? (
             <form action={cancelSessionAction}>

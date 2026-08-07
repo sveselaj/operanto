@@ -105,3 +105,94 @@ export function buildPayload({ url, title, visibleText, elements, captureId }) {
   if (boundedElements.length > 0) payload.elements = boundedElements;
   return payload;
 }
+
+/**
+ * C4 safe-link policy — the extension's INDEPENDENT copy of the rules in
+ * src/lib/computer/safe-link.ts. Server approval is necessary but not
+ * sufficient: the extension re-checks every rule immediately before
+ * navigating, so a compromised or buggy server cannot talk this extension
+ * into an unsafe navigation.
+ *
+ * Safe = real anchor, https (or loopback http), same-origin as the current
+ * page, no new tab, no download, no javascript:/data:/blob:/etc., not a
+ * bare fragment, and NO query or fragment component at all.
+ *
+ * The query/fragment refusal is a privacy rule (C4): those components carry
+ * session ids, tokens and customer identifiers, and Operanto persists page
+ * URLs as origin + pathname only. Links carrying them are rejected, never
+ * stripped-and-navigated.
+ */
+
+const LOOPBACK = ["localhost", "127.0.0.1", "::1", "[::1]"];
+
+export function isSafeNavigationTarget(href, pageUrl, options = {}) {
+  const raw = String(href ?? "").trim();
+  if (!raw) return false;
+  if (options.download) return false;
+  const target = String(options.target ?? "").trim().toLowerCase();
+  if (target && target !== "_self") return false;
+  if (raw.startsWith("#")) return false;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) {
+    const scheme = raw.slice(0, raw.indexOf(":")).toLowerCase();
+    if (scheme !== "https" && scheme !== "http") return false;
+  }
+  let page;
+  let resolved;
+  try {
+    page = new URL(pageUrl);
+    resolved = new URL(raw, page);
+  } catch {
+    return false;
+  }
+  if (resolved.username || resolved.password) return false;
+  if (resolved.protocol !== "https:") {
+    if (!(resolved.protocol === "http:" && LOOPBACK.includes(resolved.hostname))) {
+      return false;
+    }
+  }
+  if (resolved.origin !== page.origin) return false;
+  // Path-only: any query or fragment is refused outright (privacy).
+  if (resolved.search) return false;
+  if (resolved.hash) return false;
+  return true;
+}
+
+/**
+ * Normalize a URL for comparison. Origin + pathname only — the same shape
+ * Operanto persists, so a stored observation URL and a live tab URL are
+ * compared on equal terms. Safe targets never carry a query or fragment
+ * anyway (isSafeNavigationTarget refuses them before this is reached).
+ */
+export function documentUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Decide whether a claimed navigation command may be executed against the
+ * live page. ALL of these must hold independently of what the server said.
+ */
+export function mayExecuteNavigation(command, live) {
+  if (!command || !live) return false;
+  // The tab must still be on the page the observation came from.
+  if (command.observedUrl && documentUrl(live.pageUrl) !== documentUrl(command.observedUrl)) {
+    return false;
+  }
+  // The element must still be present, still an anchor, still safe.
+  if (!live.foundHref) return false;
+  if (!isSafeNavigationTarget(live.foundHref, live.pageUrl, live)) return false;
+  // And it must still point exactly where the human approved.
+  if (documentUrl(new URL(live.foundHref, live.pageUrl).href) !== documentUrl(command.expectedHref)) {
+    return false;
+  }
+  try {
+    if (new URL(command.expectedHref).origin !== command.expectedOrigin) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}

@@ -37,6 +37,8 @@ export const COMPUTER_RISK_ORDER: Record<ComputerRiskTier, number> = {
 export const COMPUTER_RISK_FLOOR: Record<ComputerActionType, ComputerRiskTier> = {
   OBSERVE: "R0_OBSERVE",
   EXTRACT: "R0_OBSERVE",
+  /** C4: same-origin anchor navigation — never below R1. */
+  OPEN_SAFE_LINK: "R1_NAVIGATE",
   NAVIGATE: "R1_NAVIGATE",
   SCROLL: "R1_NAVIGATE",
   CLICK: "R1_NAVIGATE",

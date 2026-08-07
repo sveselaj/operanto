@@ -1848,6 +1848,9 @@ enum ComputerStepRoute {
 }
 
 enum ComputerActionType {
+  /// C4: the ONLY execution primitive — one approved same-origin anchor
+  /// navigation per fresh observation. Not a general click.
+  OPEN_SAFE_LINK
   OBSERVE
   NAVIGATE
   CLICK
@@ -1884,6 +1887,12 @@ enum ComputerActionStatus {
   /// construction, no approval path exists. The human performs the final act.
   BLOCKED
   CANCELLED
+  /// C4 execution states. EXECUTING is claimed atomically with the one-shot
+  /// nonce; EXECUTED means the extension reported the navigation happened
+  /// (verification is separate and never self-reported by the model).
+  EXECUTING
+  EXECUTED
+  EXECUTION_FAILED
 }
 
 enum ComputerVerificationResult {
@@ -2011,6 +2020,20 @@ model ComputerAction {
   aiActionId             String?
   beforeSnapshotId       String?
   afterSnapshotId        String?
+  /// C4 (OPEN_SAFE_LINK only): the deterministically bound target. `ref` is
+  /// the ephemeral identity from beforeSnapshot.safeLinksJson; expectedHref
+  /// and expectedOrigin pin page identity for the extension's independent
+  /// revalidation. NEVER model-supplied free text or a selector.
+  targetRef              String?
+  expectedHref           String?
+  expectedOrigin         String?
+  /// SHA-256 of the one-shot execution nonce. The raw nonce is returned once
+  /// to the approving operator's browser and never stored or logged.
+  executionNonceHash     String?  @unique
+  executionExpiresAt     DateTime?
+  executionClaimedAt     DateTime?
+  executedAt             DateTime?
+  executionError         String?
   verificationResult     ComputerVerificationResult @default(NOT_RUN)
   /// What was checked and what it showed; redacted by erasure/retention.
   verificationNote       String?
@@ -2061,6 +2084,11 @@ model ComputerSnapshot {
   /// C2: extension-supplied capture id for replay idempotency — a retried
   /// POST lands on the same row via the (bridgeId, clientCaptureId) unique.
   clientCaptureId        String?
+  /// C4: snapshot-scoped ephemeral element identities. Array of
+  /// { ref, role, name, href } for SAFE same-origin anchors only, minted
+  /// per capture and meaningful ONLY within this snapshot. Deliberately not
+  /// a CSS/XPath selector: fragile selectors are never trusted targets.
+  safeLinksJson          Json?
   redactedAt             DateTime?
   createdAt              DateTime  @default(now())
 
@@ -2077,6 +2105,11 @@ model ComputerSnapshot {
   @@index([organisationId, sessionId, createdAt])
 }
 
+/// C4 navigation intent recorded on a ComputerAction: exactly which
+/// snapshot-scoped element, on which page identity, the human approved.
+/// Stored as its own columns (not free JSON) so execution can never bind to
+/// model free text.
+///
 /// C2 browser bridge (read-only observation transport). One short-lived,
 /// tenant- and session-bound authorization for a user-controlled browser
 /// extension to push sanitized semantic snapshots into a ComputerSession.

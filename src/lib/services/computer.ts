@@ -956,6 +956,10 @@ export async function recordBridgeSnapshot(
           payload.elements === null
             ? Prisma.DbNull
             : (payload.elements as unknown as Prisma.InputJsonValue),
+        safeLinksJson:
+          payload.safeLinks === null
+            ? Prisma.DbNull
+            : (payload.safeLinks as unknown as Prisma.InputJsonValue),
       },
     });
     await prisma.computerBridgeGrant.update({

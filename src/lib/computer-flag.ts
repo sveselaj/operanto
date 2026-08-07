@@ -29,6 +29,18 @@ export function computerGuideEnabled(): boolean {
  * suite has been rerun and the pin updated. Generic (non-Computer) AI
  * behavior is unaffected.
  */
+/**
+ * Computer navigation flag (C4) — the first browser-side effect. Requires
+ * the bridge (observation) and guide (understanding) flags too: execution
+ * without a fresh observation and a recommendation is not a product
+ * surface. Off by default; no existing organisation gains execution.
+ */
+export function computerNavigationEnabled(): boolean {
+  return (
+    process.env.OPERANTO_COMPUTER_NAVIGATION_ENABLED === "1" && computerGuideEnabled()
+  );
+}
+
 export function computerLiveApproved(expectedEvalVersion: string): boolean {
   return (
     process.env.OPERANTO_COMPUTER_LIVE_ENABLED === "1" &&
