@@ -34,12 +34,11 @@ organisation — no new infrastructure architecture.
    OPERANTO_COMPUTER_NAVIGATION_ENABLED=1
    OPERANTO_COMPUTER_VALIDATION_CAMPAIGN=c41-pilot-01
    ```
-3. Leave **live** Computer AI off unless the C3 eval gate is satisfied —
-   `OPERANTO_COMPUTER_LIVE_ENABLED=1` **and**
+3. Provider selection depends on the phase (§1a). Live Computer AI
+   requires the C3 eval gate — `OPERANTO_COMPUTER_LIVE_ENABLED=1` **and**
    `OPERANTO_COMPUTER_LIVE_EVAL_VERSION` pinned to the code's current
    `COMPUTER_LIVE_EVAL_VERSION`, after rerunning the live injection
-   fixtures. The deterministic mock provider is sufficient for most cases
-   and is the safe default. **Do not weaken or bypass that gate.**
+   fixtures. **Do not weaken or bypass that gate.**
 4. Confirm the three shared environments are untouched: production and
    staging must still have every `OPERANTO_COMPUTER_*` variable unset.
 
@@ -52,6 +51,37 @@ seeded fictional customers.
 **Extension:** load `extension/computer-bridge/` unpacked, and point its
 API base at the pilot deployment — never at production.
 
+**Reusing an existing preview.** A Vercel preview deployment created
+automatically for a PR may be reused *only if* its isolation is verified
+first: its own database branch (not staging), the `c41-pilot`
+organisation, the Computer flags set on that deployment alone, and the
+extension pointed at it specifically. If any of those is uncertain, create
+a dedicated pilot deployment instead — a preview that quietly shares the
+staging database is not an isolated pilot environment.
+
+## 1a. Two phases — mock proves plumbing, live proves usefulness
+
+The deterministic mock provider is excellent for proving the *mechanism*:
+sharing, capture, binding, approval, one-shot execution, verification,
+storage and audit. It is **not** evidence about recommendation quality:
+its guidance heuristics are written against the FictionBank fixture, so
+running real third-party pages through it would collect usefulness
+statistics about the mock rather than about Operanto. Split the series:
+
+- **Phase A — plumbing (mock).** Cases 1 (FictionBank) and 2 (Operanto).
+  Prove the whole chain end to end: share → capture → understand →
+  recommend → approve → navigate → verify → usefulness rating. **If Phase
+  A fails, stop and fix the pilot setup before touching real
+  applications.** Record Phase A usefulness ratings, but treat them as
+  evidence about the *mechanism*, not about intelligence.
+- **Phase B — intelligence (live).** All real-application cases (3–10)
+  run **only after the C3 live-eval gate has genuinely been satisfied**.
+  Usefulness ratings from Phase B are the ones that inform the C5
+  decision.
+
+Checkpoint 1 must report Phase A and Phase B results **separately**;
+merging them would overstate what the pilot proved.
+
 ## 2. Per-case protocol
 
 1. Create a Computer session with the case's trusted goal.
@@ -62,6 +92,13 @@ API base at the pilot deployment — never at production.
 5. Ask *“What am I looking at?”*, then *“Where should I look next?”*.
 6. Decide honestly. **Reject freely** — disagreement is evidence, and a
    pilot with no rejections is a pilot that learned nothing.
+   Rate against a strict bar, not an enthusiastic one:
+   **USEFUL** only when the recommendation genuinely saved you working
+   out where to go; **NOT_USEFUL** when it was technically correct but
+   you would have clicked faster yourself; **WRONG_RECOMMENDATION** when
+   it pointed somewhere unhelpful. A 10/10-useful pilot should be treated
+   as a *suspicious* result — it more likely indicates operator bias than
+   a perfect product.
 7. If approved: issue the one-shot code, execute once, let the extension
    capture the post-navigation snapshot, let verification run. Then STOP.
 8. Record the usefulness signal on the session page
@@ -164,6 +201,7 @@ Produced after ~10 meaningful cases, then **STOP** — do not continue to
 ```text
 C4.1 PILOT CHECKPOINT 1
 
+Phase (A = mock/plumbing, B = live/intelligence) — report SEPARATELY:
 Cases attempted / completed / abandoned:
 Recommendations made:
 Bound-target rate:
