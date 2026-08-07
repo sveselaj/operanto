@@ -14,8 +14,10 @@ import { computerNavigationEnabled } from "@/lib/computer-flag";
 import type { SafeLink } from "@/lib/computer/safe-link";
 import { BridgePanel } from "./bridge-panel";
 import { NavigationCodePanel } from "./navigation-panel";
+import { VALIDATION_ASSESSMENTS as ASSESSMENTS } from "@/lib/computer/validation";
 import {
   analyzeAction,
+  assessNavigationAction,
   cancelSessionAction,
   detachBridgeAction,
   proposeNavigationAction,
@@ -241,6 +243,25 @@ export default async function ComputerSessionPage({
                       </span>
                       {action.status === "APPROVED" ? (
                         <NavigationCodePanel actionId={action.id} />
+                      ) : null}
+                      {["EXECUTED", "EXECUTION_FAILED"].includes(action.status) ? (
+                        <form action={assessNavigationAction} className="mt-2 flex gap-1">
+                          <input type="hidden" name="sessionId" value={session.id} />
+                          <input type="hidden" name="actionId" value={action.id} />
+                          <span className="self-center text-xs text-muted-foreground">
+                            Did this help?
+                          </span>
+                          {ASSESSMENTS.map((value) => (
+                            <button
+                              key={value}
+                              name="assessment"
+                              value={value}
+                              className="rounded-md border border-input px-2 py-0.5 text-xs hover:bg-muted"
+                            >
+                              {value.replace(/_/g, " ").toLowerCase()}
+                            </button>
+                          ))}
+                        </form>
                       ) : null}
                     </li>
                   ))}

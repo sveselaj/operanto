@@ -9,6 +9,8 @@ import {
   detachComputerBridge,
 } from "@/lib/services/computer";
 import { runComputerAiTask } from "@/lib/services/computer-understanding";
+import { recordValidationAssessment } from "@/lib/services/computer-validation";
+import { isValidationAssessment } from "@/lib/computer/validation";
 import {
   issueNavigationNonce,
   proposeSafeNavigation,
@@ -110,6 +112,22 @@ export async function issueNavigationCodeAction(
   } catch (error) {
     return { error: errorMessage(error) };
   }
+}
+
+/**
+ * C4.1 pilot: record the human usefulness signal for one navigation.
+ * Evidence capture only — it neither creates nor advances any action, and
+ * stores an enum through the audit log (no schema, no free text).
+ */
+export async function assessNavigationAction(formData: FormData) {
+  const ctx = await requireOrg();
+  const sessionId = String(formData.get("sessionId") ?? "");
+  const actionId = String(formData.get("actionId") ?? "");
+  const value = String(formData.get("assessment") ?? "");
+  await runControl(sessionId, async () => {
+    if (!isValidationAssessment(value)) throw new Error("Unknown assessment value");
+    await recordValidationAssessment(ctx, actionId, value);
+  });
 }
 
 export async function cancelSessionAction(formData: FormData) {
