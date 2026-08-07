@@ -168,6 +168,12 @@ Conversation ("Where is my package?")
 Record these separately from "open Orders" cases; they are the evidence
 that Operanto's context is doing work, not the extension.
 
+## Pilot runbook
+
+The operational runbook, the 10-case first series, the case record
+format and the Checkpoint 1 template live in
+`docs/operanto-computer-c41-pilot.md`. Summary of the per-case protocol:
+
 ## Pilot protocol
 
 1. Enable on the pilot deployment: `OPERANTO_COMPUTER_BRIDGE_ENABLED=1`,
