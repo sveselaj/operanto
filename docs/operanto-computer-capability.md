@@ -18,6 +18,16 @@ explicit authorization.
 > C2+ (browser bridge, observation transport, any execution) remains
 > unauthorized.
 
+> **C2 addendum (2026-08-07):** the read-only browser bridge was
+> separately authorized and delivered, flag-gated off by default — MV3
+> extension with explicit tab-share gesture, short-lived session-bound
+> pairing tokens, authoritative server-side sanitization (role+name
+> elements, origin+path URLs, bounded text; values/cookies/tokens
+> unrepresentable), and hostile-page-content injection tests as the merge
+> gate. Observation is one-way; no executor exists. See
+> `docs/operanto-computer-c2.md`. C3 (page understanding / guide mode)
+> and any execution remain unauthorized.
+
 ## 1. Problem statement
 
 A large share of the work Operanto is asked to complete lives inside

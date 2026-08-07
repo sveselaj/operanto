@@ -111,6 +111,7 @@ model Organisation {
   computerSteps            ComputerStep[]
   computerActions          ComputerAction[]
   computerSnapshots        ComputerSnapshot[]
+  computerBridgeGrants     ComputerBridgeGrant[]
 }
 
 model User {
@@ -181,6 +182,7 @@ model Membership {
   computerPlans         ComputerPlan[]            @relation("ComputerPlanCreator")
   computerActions       ComputerAction[]          @relation("ComputerActionProposer")
   computerSnapshots     ComputerSnapshot[]        @relation("ComputerSnapshotRecorder")
+  computerBridgeGrants  ComputerBridgeGrant[]     @relation("ComputerBridgeCreator")
 
   @@unique([organisationId, userId])
   @@index([userId])
@@ -1910,6 +1912,7 @@ model ComputerSession {
   plans     ComputerPlan[]
   actions   ComputerAction[]
   snapshots ComputerSnapshot[]
+  bridges   ComputerBridgeGrant[]
 
   @@index([organisationId, status, createdAt])
   @@index([organisationId, customerId])
@@ -2040,15 +2043,62 @@ model ComputerSnapshot {
   /// Strictly-validated array of { role, name } semantic elements. No other
   /// keys are accepted; values are never stored.
   semanticJson           Json?
+  /// C2: set when a browser bridge produced this snapshot.
+  bridgeId               String?
+  /// C2: extension-supplied capture id for replay idempotency — a retried
+  /// POST lands on the same row via the (bridgeId, clientCaptureId) unique.
+  clientCaptureId        String?
   redactedAt             DateTime?
   createdAt              DateTime  @default(now())
 
   organisation Organisation    @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   session      ComputerSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   recordedBy   Membership?     @relation("ComputerSnapshotRecorder", fields: [recordedByMembershipId], references: [id], onDelete: SetNull)
+  bridge       ComputerBridgeGrant? @relation(fields: [bridgeId], references: [id], onDelete: SetNull)
 
   actionsBefore ComputerAction[] @relation("ActionBeforeSnapshot")
   actionsAfter  ComputerAction[] @relation("ActionAfterSnapshot")
 
+  @@unique([bridgeId, clientCaptureId])
   @@index([organisationId, sessionId, createdAt])
+}
+
+/// C2 browser bridge (read-only observation transport). One short-lived,
+/// tenant- and session-bound authorization for a user-controlled browser
+/// extension to push sanitized semantic snapshots into a ComputerSession.
+/// The raw token exists only in the createComputerBridgeGrant response and
+/// the user's extension — at rest there is only its SHA-256 hash (the
+/// invitation-token pattern). There is NO action path back into the page:
+/// the bridge can never click, type, navigate, submit, or read
+/// values/cookies/storage — observation is one-way by construction.
+enum ComputerBridgeStatus {
+  PENDING
+  ATTACHED
+  DETACHED
+  REVOKED
+}
+
+model ComputerBridgeGrant {
+  id                    String               @id @default(cuid())
+  organisationId        String
+  sessionId             String
+  createdByMembershipId String?
+  /// SHA-256 hex of the raw pairing token. Never the token itself.
+  tokenHash             String               @unique
+  status                ComputerBridgeStatus @default(PENDING)
+  /// Hard credential lifetime — attach and capture both refuse after this.
+  expiresAt             DateTime
+  attachedAt            DateTime?
+  detachedAt            DateTime?
+  lastCaptureAt         DateTime?
+  captureCount          Int                  @default(0)
+  createdAt             DateTime             @default(now())
+
+  organisation Organisation    @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  session      ComputerSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  createdBy    Membership?     @relation("ComputerBridgeCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
+
+  snapshots ComputerSnapshot[]
+
+  @@index([organisationId, sessionId, status])
 }

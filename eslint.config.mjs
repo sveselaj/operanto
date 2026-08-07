@@ -16,6 +16,10 @@ const eslintConfig = defineConfig([
     "**/*.cjs",
     // Archived chat-cockpit prototype — not compiled, linted, or tested.
     "legacy/**",
+    // Browser extension (Computer C2 bridge): plain MV3 JavaScript with
+    // chrome.* globals, packaged separately — its pure extraction core is
+    // unit-tested from test/, the packaging files are not part of the app.
+    "extension/**",
   ]),
 ]);
 
