@@ -369,6 +369,13 @@ Guidance only: Operanto explains pages and recommends where the HUMAN
 should look; no browser-side effect exists. See
 docs/operanto-computer-c3.md.
 
+Computer C4.1 delivered (2026-08-07): controlled execution validation —
+refusal auditing (closed taxonomy), coarse human usefulness signal,
+metrics derived from existing domain state, CLI report and a small
+internal view. Zero migrations, no new capability, no third-party
+telemetry; invariants must stay at 0. Evidence for a later human C5
+decision. See docs/operanto-computer-c4-1.md.
+
 Computer C4 delivered (same date, separately authorized): safe single
 navigation, flag-gated off (OPERANTO_COMPUTER_NAVIGATION_ENABLED,
 requires bridge + guide) — the first browser-side effect, bounded to ONE

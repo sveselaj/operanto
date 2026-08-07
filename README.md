@@ -82,6 +82,7 @@ Checks: `pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm build`.
 - [docs/operanto-computer-c2.md](docs/operanto-computer-c2.md) — Computer C2 browser bridge: read-only tab sharing via MV3 extension, session-bound tokens, server-side sanitization, dev-DB migration guard (flag-gated off)
 - [docs/operanto-computer-c3.md](docs/operanto-computer-c3.md) — Computer C3 page understanding + guide mode: grounded AI answers over shared tabs, deterministic evidence binding, /computer workbench (flag-gated off; guidance only, no execution)
 - [docs/operanto-computer-c4.md](docs/operanto-computer-c4.md) — Computer C4 safe single navigation: one approved same-origin link opening per fresh observation, one-shot credentials, extension-side re-enforcement, server-side verification (flag-gated off)
+- [docs/operanto-computer-c4-1.md](docs/operanto-computer-c4-1.md) — Computer C4.1 controlled execution validation: refusal auditing, derived metrics, failure taxonomy, pilot protocol and C5 review criteria (no new capability, zero migrations)
 - [docs/event-schema.md](docs/event-schema.md) — wire contract with Pronatona
 - [docs/security.md](docs/security.md) — threat model, permission matrix, controls
 - [docs/customer-matching.md](docs/customer-matching.md) — exact-match-only policy

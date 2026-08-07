@@ -90,6 +90,12 @@ export type SanitizedBrowserPayload = {
   captureId: string | null;
   /** C4: server-verified safe same-origin anchors, snapshot-scoped. */
   safeLinks: SafeLink[] | null;
+  /**
+   * C4.1: how many anchor candidates the safe-link policy rejected. A
+   * COUNT for validation only — which links, and their hrefs, are never
+   * recorded anywhere.
+   */
+  droppedLinkCount: number;
 };
 
 export class BrowserPayloadError extends Error {
@@ -139,6 +145,7 @@ export function sanitizeBrowserPayload(raw: unknown): SanitizedBrowserPayload {
   // candidates are dropped silently — they are simply not navigable, and
   // a target that is not in this list can never be executed.
   let safeLinks: SafeLink[] | null = null;
+  let droppedLinkCount = 0;
   if (parsed.links?.length) {
     const seen = new Set<string>();
     const kept: SafeLink[] = [];
@@ -151,7 +158,10 @@ export function sanitizeBrowserPayload(raw: unknown): SanitizedBrowserPayload {
         target: candidate.target ?? null,
         hasDownload: candidate.download ?? false,
       });
-      if (!verdict.safe) continue;
+      if (!verdict.safe) {
+        droppedLinkCount += 1;
+        continue;
+      }
       seen.add(candidate.ref);
       kept.push({
         ref: candidate.ref,
@@ -172,5 +182,6 @@ export function sanitizeBrowserPayload(raw: unknown): SanitizedBrowserPayload {
     elements: parsed.elements ?? null,
     captureId: parsed.captureId ?? null,
     safeLinks,
+    droppedLinkCount,
   };
 }

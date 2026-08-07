@@ -41,6 +41,21 @@ export function computerNavigationEnabled(): boolean {
   );
 }
 
+/**
+ * Computer C4.1 validation campaign id, or null. When set, Computer audit
+ * events are stamped with it via `AuditEvent.correlationId`, so intentional
+ * validation runs can be grouped and separated from ordinary use without a
+ * schema change and without any new store. It is an opaque label — never a
+ * URL, customer identifier, or anything derived from page content — and it
+ * grants no capability whatsoever.
+ */
+export function computerValidationCampaign(): string | null {
+  const value = process.env.OPERANTO_COMPUTER_VALIDATION_CAMPAIGN?.trim();
+  if (!value) return null;
+  // Bounded, opaque: reject anything that could smuggle content into audit.
+  return /^[A-Za-z0-9_.:-]{1,64}$/.test(value) ? value : null;
+}
+
 export function computerLiveApproved(expectedEvalVersion: string): boolean {
   return (
     process.env.OPERANTO_COMPUTER_LIVE_ENABLED === "1" &&

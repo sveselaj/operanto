@@ -49,6 +49,16 @@ explicit authorization.
 > loops, buttons, typing or submissions exist. See
 > `docs/operanto-computer-c4.md`.
 
+> **C4.1 addendum (2026-08-07):** controlled execution validation —
+> evidence gathering only, **no change to what Computer may do**. Refusals
+> (previously silent) are audited with a closed enum taxonomy, a coarse
+> human usefulness signal is recorded, and validation metrics are derived
+> from existing domain state with zero migrations and no third-party
+> telemetry. Invariants (unauthorized side effects, cross-origin escapes,
+> replay successes, sensitive URL persistence) must remain 0. See
+> `docs/operanto-computer-c4-1.md`. C5 remains unauthorized; C4.1 unlocks
+> nothing.
+
 ## 1. Problem statement
 
 A large share of the work Operanto is asked to complete lives inside
