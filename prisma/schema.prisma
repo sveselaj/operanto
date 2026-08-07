@@ -106,6 +106,11 @@ model Organisation {
   callAttempts             CallAttempt[]
   leadWorkLocks            LeadWorkLock[]
   notifications            Notification[]
+  computerSessions         ComputerSession[]
+  computerPlans            ComputerPlan[]
+  computerSteps            ComputerStep[]
+  computerActions          ComputerAction[]
+  computerSnapshots        ComputerSnapshot[]
 }
 
 model User {
@@ -172,6 +177,10 @@ model Membership {
   callAttempts          CallAttempt[]             @relation("CallCaller")
   leadWorkLocks         LeadWorkLock[]            @relation("LockHolder")
   notifications         Notification[]            @relation("NotificationRecipient")
+  computerSessions      ComputerSession[]         @relation("ComputerSessionCreator")
+  computerPlans         ComputerPlan[]            @relation("ComputerPlanCreator")
+  computerActions       ComputerAction[]          @relation("ComputerActionProposer")
+  computerSnapshots     ComputerSnapshot[]        @relation("ComputerSnapshotRecorder")
 
   @@unique([organisationId, userId])
   @@index([userId])
@@ -335,6 +344,7 @@ model Customer {
   aiActions     AIAction[]
   consents      Consent[]
   leads         Lead[]
+  computerSessions ComputerSession[]
 
   @@unique([organisationId, sourceSystem, sourceCustomerId])
   @@index([organisationId, emailNormalized])
@@ -515,6 +525,7 @@ model Task {
   lead         Lead?         @relation(fields: [leadId], references: [id], onDelete: Cascade)
   assignee     Membership?   @relation("TaskAssignee", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
   createdBy    Membership?   @relation("TaskCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
+  computerSessions ComputerSession[]
 
   @@index([organisationId, status, dueAt])
   @@index([organisationId, assignedMembershipId])
@@ -753,6 +764,7 @@ model Conversation {
   aiActions    AIAction[]
   approvalRequests ApprovalRequest[]
   channelInboundEvents ChannelInboundEvent[]
+  computerSessions ComputerSession[]
 
   @@unique([organisationId, channelConnectionId, providerThreadId])
   @@index([organisationId, lastMessageAt])
@@ -937,6 +949,8 @@ enum AIMode {
 
 enum ApprovalSourceType {
   AI_REPLY_DRAFT
+  /// Computer C1: an R3_COMMIT ComputerAction awaiting human approval.
+  COMPUTER_ACTION
 }
 
 enum ApprovalStatus {
@@ -979,6 +993,8 @@ model AIAction {
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   customer     Customer?     @relation(fields: [customerId], references: [id], onDelete: Restrict)
   requestedBy  Membership?   @relation("AIActionRequester", fields: [requestedByMembershipId], references: [id], onDelete: SetNull)
+  computerPlans   ComputerPlan[]   @relation("ComputerPlanAiSource")
+  computerActions ComputerAction[] @relation("ComputerActionAiSource")
 
   @@index([organisationId, conversationId, createdAt])
   @@index([organisationId, createdAt])
@@ -1775,4 +1791,264 @@ model Notification {
 
   @@unique([membershipId, type, entityId, dedupeKey])
   @@index([membershipId, readAt, createdAt])
+}
+
+// ── Computer C1 (domain foundation) ────────────────────────────────
+//
+// Representations of governed computer/browser work — NOT execution.
+// Nothing in this slice drives a browser, captures a real page, or performs
+// any external effect; C1 stores what a future execution slice will need to
+// be governed, replayed, verified and audited. Ratified in
+// docs/operanto-computer-capability.md (C0 ADR); slice notes in
+// docs/operanto-computer-c1.md. The 2026-08-02 agent-runtime gate holds.
+
+enum ComputerSessionStatus {
+  CREATED
+  PLANNING
+  READY
+  /// Human-recorded conclusion (e.g. the goal was met, possibly by a human
+  /// performing the final act). NEVER set by any automated execution — no
+  /// executor exists in C1.
+  COMPLETED
+  /// Human-recorded conclusion: the goal could not be achieved.
+  FAILED
+  CANCELLED
+}
+
+enum ComputerPlanStatus {
+  PROPOSED
+  /// Replaced by a newer plan version; kept immutably as intent history.
+  SUPERSEDED
+  CANCELLED
+}
+
+/// Where a plan step is expected to route — the API-first principle encoded
+/// at step level. COMPUTER is one route among four, never the default.
+enum ComputerStepRoute {
+  NATIVE_TOOL
+  CONNECTOR
+  COMPUTER
+  HUMAN
+  /// Information already sufficient — no execution required.
+  NONE
+}
+
+enum ComputerActionType {
+  OBSERVE
+  NAVIGATE
+  CLICK
+  TYPE
+  SELECT
+  SCROLL
+  EXTRACT
+  DOWNLOAD
+  UPLOAD
+  SUBMIT
+}
+
+/// The C0 risk ladder. Kept as its own enum because collapsing it onto
+/// AIRiskLevel would be lossy (R0 and R1 both map to LOW); the mapping used
+/// for ApprovalRequest risk snapshots lives in src/lib/computer/policy.ts:
+/// R0/R1 → LOW, R2 → MEDIUM, R3 → HIGH, R4 → BLOCKED.
+enum ComputerRiskTier {
+  R0_OBSERVE
+  R1_NAVIGATE
+  R2_PREPARE
+  R3_COMMIT
+  R4_RESTRICTED
+}
+
+enum ComputerActionStatus {
+  PROPOSED
+  /// R3_COMMIT only: an ApprovalRequest (sourceType COMPUTER_ACTION) is
+  /// PENDING. The action can never leave this status except through the
+  /// unified approval decision or cancellation.
+  APPROVAL_PENDING
+  APPROVED
+  REJECTED
+  /// R4_RESTRICTED actions are born BLOCKED and stay BLOCKED — terminal by
+  /// construction, no approval path exists. The human performs the final act.
+  BLOCKED
+  CANCELLED
+}
+
+enum ComputerVerificationResult {
+  NOT_RUN
+  VERIFIED
+  FAILED
+  INCONCLUSIVE
+}
+
+/// One bounded attempt to advance an Operanto goal through software
+/// interfaces. Tenant-scoped; optionally anchored to the conversation,
+/// customer and task that motivated it. The goal is TRUSTED Operanto control
+/// data (staff/AI intent) — snapshot content can never rewrite it.
+model ComputerSession {
+  id                    String                @id @default(cuid())
+  organisationId        String
+  createdByMembershipId String?
+  conversationId        String?
+  customerId            String?
+  taskId                String?
+  /// The intent, in the operator's words. Personal data may appear here, so
+  /// erasure and retention redact it (redactedAt).
+  goal                  String
+  status                ComputerSessionStatus @default(CREATED)
+  /// Free-text conclusion or cancellation note; redacted with the goal.
+  outcomeNote           String?
+  redactedAt            DateTime?
+  concludedAt           DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  createdBy    Membership?   @relation("ComputerSessionCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customer     Customer?     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  task         Task?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  plans     ComputerPlan[]
+  actions   ComputerAction[]
+  snapshots ComputerSnapshot[]
+
+  @@index([organisationId, status, createdAt])
+  @@index([organisationId, customerId])
+  @@index([conversationId])
+}
+
+/// An immutable, versioned statement of intent: what the agent (or operator)
+/// proposed to do BEFORE anything acts. New intent arrives as a new version
+/// that supersedes the previous one — plans are never edited in place.
+model ComputerPlan {
+  id                    String             @id @default(cuid())
+  organisationId        String
+  sessionId             String
+  version               Int
+  status                ComputerPlanStatus @default(PROPOSED)
+  /// Plan rationale; may quote customer context, so redaction covers it.
+  summary               String
+  /// The AIAction whose output proposed this plan, when AI-proposed.
+  aiActionId            String?
+  createdByMembershipId String?
+  redactedAt            DateTime?
+  createdAt             DateTime           @default(now())
+
+  organisation Organisation    @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  session      ComputerSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  aiAction     AIAction?       @relation("ComputerPlanAiSource", fields: [aiActionId], references: [id], onDelete: SetNull)
+  createdBy    Membership?     @relation("ComputerPlanCreator", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
+
+  steps ComputerStep[]
+
+  @@unique([sessionId, version])
+  @@index([organisationId, sessionId])
+}
+
+/// One ordered intended unit of work inside a plan. Steps are immutable with
+/// their plan; a changed intention is a new plan version.
+model ComputerStep {
+  id             String            @id @default(cuid())
+  organisationId String
+  planId         String
+  position       Int
+  /// Human-readable intention; redacted with the plan.
+  title          String
+  plannedRoute   ComputerStepRoute
+  redactedAt     DateTime?
+  createdAt      DateTime          @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  plan         ComputerPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  actions ComputerAction[]
+
+  @@unique([planId, position])
+  @@index([organisationId, planId])
+}
+
+/// A typed PROPOSED computer operation. C1 has no executor: rows here are
+/// representations a future authorized slice will execute — after RBAC,
+/// policy and (for R3) the unified ApprovalRequest gate. Approval linkage
+/// uses ApprovalRequest(sourceType COMPUTER_ACTION, sourceId = this id);
+/// there is deliberately no FK and no second approval framework.
+model ComputerAction {
+  id                     String                     @id @default(cuid())
+  organisationId         String
+  sessionId              String
+  stepId                 String?
+  actionType             ComputerActionType
+  riskTier               ComputerRiskTier
+  status                 ComputerActionStatus       @default(PROPOSED)
+  /// Why this action is proposed — audit-quality rationale. May contain
+  /// customer context; redacted by erasure/retention.
+  reason                 String
+  /// Semantic target descriptor (role / accessible name / URL pattern),
+  /// strictly validated in the service layer (bounded, no unknown keys).
+  /// NEVER element values, credentials or free page dumps.
+  targetJson             Json?
+  /// Proposer certainty that the target is unambiguous, 0..1 (validated in
+  /// the service layer). Confidence is NEVER authorization: no value skips
+  /// RBAC, policy or approval.
+  confidence             Float?
+  proposedByMembershipId String?
+  /// The AIAction whose output proposed this action, when AI-proposed.
+  aiActionId             String?
+  beforeSnapshotId       String?
+  afterSnapshotId        String?
+  verificationResult     ComputerVerificationResult @default(NOT_RUN)
+  /// What was checked and what it showed; redacted by erasure/retention.
+  verificationNote       String?
+  verifiedAt             DateTime?
+  decidedAt              DateTime?
+  redactedAt             DateTime?
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+
+  organisation   Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  session        ComputerSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  step           ComputerStep?     @relation(fields: [stepId], references: [id], onDelete: SetNull)
+  proposedBy     Membership?       @relation("ComputerActionProposer", fields: [proposedByMembershipId], references: [id], onDelete: SetNull)
+  aiAction       AIAction?         @relation("ComputerActionAiSource", fields: [aiActionId], references: [id], onDelete: SetNull)
+  beforeSnapshot ComputerSnapshot? @relation("ActionBeforeSnapshot", fields: [beforeSnapshotId], references: [id], onDelete: SetNull)
+  afterSnapshot  ComputerSnapshot? @relation("ActionAfterSnapshot", fields: [afterSnapshotId], references: [id], onDelete: SetNull)
+
+  @@index([organisationId, sessionId, createdAt])
+  @@index([organisationId, status])
+  @@index([stepId])
+}
+
+/// An immutable logical representation of what Computer believed it observed
+/// at a point in time. C1 NEVER captures this from a real browser — rows are
+/// created by staff/services as representations. Content here is UNTRUSTED
+/// observation data in the injection sense: no service reads it to make
+/// policy, approval or lifecycle decisions, and it can never mutate a
+/// session's goal or an action's authorization. Semantic elements store
+/// role + accessible name ONLY — never input values, so credential-shaped
+/// data has no field to live in.
+model ComputerSnapshot {
+  id                     String    @id @default(cuid())
+  organisationId         String
+  sessionId              String
+  recordedByMembershipId String?
+  /// Application/page identity; personal data may appear in URLs and titles,
+  /// so redaction covers them.
+  url                    String?
+  pageTitle              String?
+  /// Bounded human-readable summary of visible content (service-enforced
+  /// length cap). Redacted by erasure/retention.
+  visibleTextSummary     String?
+  /// Strictly-validated array of { role, name } semantic elements. No other
+  /// keys are accepted; values are never stored.
+  semanticJson           Json?
+  redactedAt             DateTime?
+  createdAt              DateTime  @default(now())
+
+  organisation Organisation    @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  session      ComputerSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  recordedBy   Membership?     @relation("ComputerSnapshotRecorder", fields: [recordedByMembershipId], references: [id], onDelete: SetNull)
+
+  actionsBefore ComputerAction[] @relation("ActionBeforeSnapshot")
+  actionsAfter  ComputerAction[] @relation("ActionAfterSnapshot")
+
+  @@index([organisationId, sessionId, createdAt])
 }

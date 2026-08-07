@@ -224,10 +224,15 @@ Architecture (ported from the legacy prototype, adapted to main):
 
 ## Operanto Computer
 
-> C0 (2026-08-07) ratified Computer as a bounded capability —
-> **documentation only**. No code, schema, permission, flag, route, or UI
-> exists; every execution slice requires explicit authorization. Full
-> decision record: `docs/operanto-computer-capability.md`.
+> C0 (2026-08-07) ratified Computer as a bounded capability; C1 (same
+> date, separately authorized) delivered the dormant **domain
+> foundation** — session/plan/step/action/snapshot models, risk floors,
+> unified approval integration, `computer:read`/`computer:operate`, and
+> privacy lifecycle coverage. **No executor exists**: no browser, no
+> capture, no external effect, no UI. Decision record:
+> `docs/operanto-computer-capability.md`; slice notes:
+> `docs/operanto-computer-c1.md`. Every execution slice requires explicit
+> authorization.
 
 Mission: allow Operanto to safely observe and operate software interfaces
 when a trusted deterministic or API integration does not exist or is
@@ -330,3 +335,10 @@ Computer C0 ratified: Computer joins the capability tree as a bounded
 capability, documentation only — no code, schema, permissions, flags, or
 UI. Decision record, risk ladder (R0–R4), governance mapping, and
 deferred C1/C2 direction: docs/operanto-computer-capability.md.
+
+Computer C1 delivered (same date, separately authorized): dormant domain
+foundation — 5 org-scoped models, R0–R4 risk enum with type floors,
+COMPUTER_ACTION approvals through the unified gate, computer:read/operate
+(ADMIN+SUPERVISOR; approvals:decide reused for decisions), erasure/
+restriction/retention coverage, ids-only audit. No executor, no UI, no
+external effect. See docs/operanto-computer-c1.md.

@@ -8,6 +8,16 @@ nothing agentic is built ahead of the ratified sequence in
 `docs/operanto-agent-runtime-conversation.md`. C1 and later slices require
 explicit authorization.
 
+> **C1 addendum (2026-08-07):** the domain foundation was separately
+> authorized and delivered — schema, policy module, services, unified
+> approval integration, `computer:read`/`computer:operate`, and privacy
+> coverage, all dormant with **no executor**. See
+> `docs/operanto-computer-c1.md`. §10's open decisions are resolved there:
+> colon-family names; `computer:approve` NOT created (`approvals:decide`
+> reused); `computer:admin` deferred with the first configuration surface.
+> C2+ (browser bridge, observation transport, any execution) remains
+> unauthorized.
+
 ## 1. Problem statement
 
 A large share of the work Operanto is asked to complete lives inside
