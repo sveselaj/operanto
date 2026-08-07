@@ -17,11 +17,11 @@ const safe = (href: string, extra: Record<string, unknown> = {}) =>
   classifySafeLink({ href, pageUrl: PAGE, ...extra });
 
 describe("classifySafeLink", () => {
-  it("accepts a same-origin https anchor and returns the document URL", () => {
-    const verdict = safe("/orders?tab=all#top");
+  it("accepts a same-origin https anchor and returns the path-only document URL", () => {
+    const verdict = safe("/orders");
     expect(verdict).toEqual({
       safe: true,
-      url: "https://deposit.fictionbank.test/orders?tab=all",
+      url: "https://deposit.fictionbank.test/orders",
       origin: "https://deposit.fictionbank.test",
     });
   });
@@ -80,6 +80,58 @@ describe("classifySafeLink", () => {
 
   it("accepts explicit same-tab targets", () => {
     expect(safe("/orders", { target: "_self" }).safe).toBe(true);
+  });
+
+  it("PRIVACY: rejects query-bearing destinations outright — never strips them", () => {
+    for (const href of [
+      "/orders?id=123",
+      "/orders?token=secret",
+      "https://deposit.fictionbank.test/orders?session=abc",
+    ]) {
+      // Rejected, not silently normalized to "/orders".
+      expect(safe(href)).toEqual({ safe: false, reason: "HAS_QUERY" });
+    }
+    // A trailing "?" carries no query content and is therefore not a leak.
+    expect(safe("/orders?").safe).toBe(true);
+  });
+
+  it("PRIVACY: rejects fragment-bearing destinations outright", () => {
+    expect(safe("/orders#details")).toEqual({ safe: false, reason: "HAS_FRAGMENT" });
+    expect(safe("https://deposit.fictionbank.test/orders#tab=2")).toEqual({
+      safe: false,
+      reason: "HAS_FRAGMENT",
+    });
+    expect(safe("/orders?id=1#x").safe).toBe(false);
+  });
+
+  it("the accepted URL is path-only — no query or fragment can survive", () => {
+    const verdict = safe("/orders");
+    expect(verdict).toEqual({
+      safe: true,
+      url: "https://deposit.fictionbank.test/orders",
+      origin: "https://deposit.fictionbank.test",
+    });
+    if (verdict.safe) {
+      expect(verdict.url).not.toContain("?");
+      expect(verdict.url).not.toContain("#");
+    }
+  });
+});
+
+describe("persistence backstop (safeLinkSchema)", () => {
+  it("refuses to serialize a query- or fragment-bearing href even if reached", async () => {
+    const { safeLinkSchema } = await import("@/lib/computer/safe-link");
+    const base = { ref: "l0", role: "link" as const, name: "Orders" };
+    expect(
+      safeLinkSchema.safeParse({ ...base, href: "https://x.test/orders" }).success,
+    ).toBe(true);
+    expect(
+      safeLinkSchema.safeParse({ ...base, href: "https://x.test/orders?token=s" })
+        .success,
+    ).toBe(false);
+    expect(
+      safeLinkSchema.safeParse({ ...base, href: "https://x.test/orders#a" }).success,
+    ).toBe(false);
   });
 });
 

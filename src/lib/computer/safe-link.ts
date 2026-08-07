@@ -16,7 +16,20 @@ import { z } from "zod";
  *  - it carries no target that opens a new tab/window;
  *  - it is not a download;
  *  - it is not javascript:, data:, blob:, file:, mailto:, tel:, etc.;
- *  - it is not a bare fragment (no navigation) — nothing to verify.
+ *  - it is not a bare fragment (no navigation) — nothing to verify;
+ *  - it has NO query component and NO fragment (see below).
+ *
+ * PRIVACY: query strings and fragments routinely carry session ids, signed
+ * tokens, customer identifiers and other secrets. C2 established that
+ * persisted page URLs are origin + pathname only. C4 preserves that
+ * invariant mechanically by REJECTING query/fragment-bearing destinations
+ * outright rather than stripping and navigating — stripping would change
+ * where the human's approval actually leads, and the raw values must never
+ * be persisted, audited, or handed to the extension. C4 therefore permits
+ * simple same-origin PATH navigation only. This is an intentional C4
+ * restriction, not a permanent product limitation: query-bearing links
+ * need a separately reviewed privacy-preserving destination identity
+ * (likely a normalized fingerprint, never raw query values).
  *
  * Buttons, JS-driven elements, form submits, arbitrary selectors and
  * model-supplied URLs are NOT navigable in C4 and have no representation
@@ -45,7 +58,11 @@ export type SafeLinkRejection =
   | "NEW_TAB"
   | "DOWNLOAD"
   | "FRAGMENT_ONLY"
-  | "EMBEDDED_CREDENTIALS";
+  | "EMBEDDED_CREDENTIALS"
+  /** Privacy: the destination carries a query component (C4 restriction). */
+  | "HAS_QUERY"
+  /** Privacy: the destination carries a fragment (C4 restriction). */
+  | "HAS_FRAGMENT";
 
 export type SafeLinkVerdict =
   | { safe: true; url: string; origin: string }
@@ -103,8 +120,13 @@ export function classifySafeLink(candidate: SafeLinkCandidate): SafeLinkVerdict 
   ) {
     return { safe: false, reason: "FRAGMENT_ONLY" };
   }
-  // Strip the fragment: the navigation target is the document URL.
-  const url = `${resolved.origin}${resolved.pathname}${resolved.search}`;
+  // Privacy (C4): reject — never strip-and-navigate. A stripped URL would
+  // send the human somewhere other than what they approved, and the raw
+  // values must not be persisted, audited, or handed to the extension.
+  if (resolved.hash) return { safe: false, reason: "HAS_FRAGMENT" };
+  if (resolved.search) return { safe: false, reason: "HAS_QUERY" };
+
+  const url = `${resolved.origin}${resolved.pathname}`;
   if (url.length > SAFE_LINK_LIMITS.hrefMax) {
     return { safe: false, reason: "NOT_ABSOLUTE" };
   }
@@ -125,8 +147,19 @@ export const safeLinkSchema = z
       .regex(/^[A-Za-z0-9_-]+$/),
     role: z.literal("link"),
     name: z.string().min(1).max(SAFE_LINK_LIMITS.nameMax),
-    /** Absolute, same-origin, https (or loopback http) — server-verified. */
-    href: z.string().min(1).max(SAFE_LINK_LIMITS.hrefMax),
+    /**
+     * Absolute, same-origin, https (or loopback http), PATH ONLY —
+     * server-verified. The `?`/`#` refusal is repeated here as a
+     * persistence-layer backstop: even a bug elsewhere cannot write a
+     * query- or fragment-bearing URL into safeLinksJson.
+     */
+    href: z
+      .string()
+      .min(1)
+      .max(SAFE_LINK_LIMITS.hrefMax)
+      .refine((value) => !value.includes("?") && !value.includes("#"), {
+        message: "Safe links are path-only: no query or fragment may be persisted",
+      }),
   })
   .strict();
 

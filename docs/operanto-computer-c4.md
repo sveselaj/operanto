@@ -37,9 +37,45 @@ capture, proposal, claim — and independently in the extension. A target
 must be a real anchor that is: https (or loopback http for local dev),
 **same-origin** with the observed page, not `target=_blank`/named, not a
 download, not `javascript:`/`data:`/`blob:`/`file:`/`mailto:`/`tel:`, not
-a bare fragment, and free of embedded credentials. Buttons, JS-driven
-elements, form submits, arbitrary selectors and model-supplied URLs are
-**not representable** — there is no field or endpoint that accepts them.
+a bare fragment, free of embedded credentials, and **path-only — no query
+and no fragment** (below). Buttons, JS-driven elements, form submits,
+arbitrary selectors and model-supplied URLs are **not representable** —
+there is no field or endpoint that accepts them.
+
+### Path-only destinations (privacy invariant)
+
+C2 established that persisted page URLs are **origin + pathname only**:
+query strings and fragments routinely carry session identifiers, signed
+tokens, customer identifiers and other secrets. C4 preserves that
+invariant mechanically — a destination whose normalized URL has a
+non-empty query or fragment is **rejected outright**:
+
+| Destination | |
+|---|---|
+| `https://example.test/orders` | allowed |
+| `https://example.test/orders?id=123` | rejected (`HAS_QUERY`) |
+| `https://example.test/orders?token=secret` | rejected (`HAS_QUERY`) |
+| `https://example.test/orders#details` | rejected (`HAS_FRAGMENT`) |
+
+The link is **rejected, never stripped-and-navigated**: stripping would
+send the human somewhere other than what they approved, and the raw
+values must never be persisted, audited, or handed to the extension. The
+rule is enforced at all four points (capture, proposal, claim,
+extension-side revalidation), with a persistence-layer backstop in
+`safeLinkSchema` so no code path can write a `?`/`#` href into
+`safeLinksJson`. Regression-tested: such links never reach
+`safeLinksJson`, never reach `ComputerAction.expectedHref`, never reach
+audit metadata, are unproposable, and a tampered target fails closed at
+claim time with the action still `APPROVED` (no command was issued).
+
+**This is an intentional C4 restriction, not a permanent product
+limitation.** Many real applications address records by query
+(`/orders?id=4811`). Supporting them needs a separately reviewed,
+privacy-preserving destination identity — most likely a normalized
+destination *fingerprint* (e.g. a salted hash of the normalized query, or
+an opaque server-side handle) rather than persisted raw query values —
+plus its own erasure/retention decision. That is out of scope here and
+must not be added by widening this policy.
 
 ## Execution identity (freshness)
 
@@ -125,5 +161,5 @@ Applied locally through the db-guard; staging untouched this slice.
 
 Bounded autonomous step loops, multi-step navigation, buttons/menus,
 typing, form submission, uploads/downloads, screenshots, Playwright/CDP,
-any model-issued browser command. Those belong to a later slice with its
-own security review.
+any model-issued browser command, and query/fragment-bearing destinations
+(above). Those belong to later slices with their own security reviews.

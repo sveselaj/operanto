@@ -177,6 +177,103 @@ describeDb("capture-time safe-link extraction", () => {
   });
 });
 
+describeDb("privacy: query/fragment destinations are never executable", () => {
+  const SECRET_LINKS = [
+    { ref: "q0", name: "Order 123", href: "/orders?id=123" },
+    { ref: "q1", name: "Signed", href: "/orders?token=s3cr3t-session-value" },
+    { ref: "q2", name: "Details", href: "/orders#details" },
+    { ref: "q3", name: "Both", href: "/orders?token=s3cr3t-session-value#tab" },
+    { ref: "q4", name: "Absolute", href: "https://deposit.fictionbank.test/o?sid=abc" },
+  ];
+
+  it("query/fragment links never reach safeLinksJson, and cannot be proposed", async () => {
+    const ctx = await makeCtx("org-a");
+    const observed = await observedSession(
+      ctx,
+      depositPayload([
+        ...SECRET_LINKS,
+        { ref: "l0", name: "Orders", href: "/orders" },
+      ]),
+    );
+    const snapshot = await db.computerSnapshot.findUniqueOrThrow({
+      where: { id: observed.snapshotId },
+    });
+    // Only the path-only link survives capture.
+    expect(snapshot.safeLinksJson).toEqual([
+      { ref: "l0", role: "link", name: "Orders", href: ORDERS_URL },
+    ]);
+    // No query/fragment material anywhere on the persisted snapshot.
+    const snapshotBlob = JSON.stringify(snapshot);
+    expect(snapshotBlob).not.toContain("s3cr3t-session-value");
+    expect(snapshotBlob).not.toContain("id=123");
+    expect(snapshotBlob).not.toContain("sid=abc");
+    expect(snapshotBlob).not.toContain("#details");
+
+    // And none of them is a proposable target.
+    for (const link of SECRET_LINKS) {
+      await expect(
+        proposeSafeNavigation(ctx, observed.session.id, { ref: link.ref }, "why"),
+      ).rejects.toThrow(/No safe same-origin link/);
+    }
+  });
+
+  it("query content cannot reach ComputerAction target fields or audit metadata", async () => {
+    const ctx = await makeCtx("org-a");
+    const observed = await observedSession(
+      ctx,
+      depositPayload([
+        { ref: "l0", name: "Orders", href: "/orders" },
+        ...SECRET_LINKS,
+      ]),
+    );
+    await proposeSafeNavigation(ctx, observed.session.id, { ref: "l0" }, "check orders");
+
+    const action = await db.computerAction.findFirstOrThrow({
+      where: { sessionId: observed.session.id },
+    });
+    expect(action.expectedHref).toBe(ORDERS_URL);
+    expect(action.expectedHref).not.toContain("?");
+    expect(action.expectedHref).not.toContain("#");
+    const actionBlob = JSON.stringify(action);
+    expect(actionBlob).not.toContain("s3cr3t-session-value");
+    expect(actionBlob).not.toContain("id=123");
+
+    const auditBlob = JSON.stringify(
+      await db.auditEvent.findMany({ where: { organisationId: ctx.organisation.id } }),
+    );
+    expect(auditBlob).not.toContain("s3cr3t-session-value");
+    expect(auditBlob).not.toContain("id=123");
+    expect(auditBlob).not.toContain("#details");
+    expect(auditBlob).not.toContain("?");
+
+    const approvalBlob = JSON.stringify(
+      await db.approvalRequest.findMany({
+        where: { organisationId: ctx.organisation.id },
+      }),
+    );
+    expect(approvalBlob).not.toContain("s3cr3t-session-value");
+    expect(approvalBlob).not.toContain("id=123");
+  });
+
+  it("an execution attempt against a tampered query target fails closed at claim", async () => {
+    const ctx = await makeCtx("org-a");
+    const { grant, action } = await approvedNavigation(ctx);
+    const { nonce } = await issueNavigationNonce(ctx, action.id);
+    // Simulate a bypass that rewrote the bound target to carry a token.
+    await db.computerAction.update({
+      where: { id: action.id },
+      data: { expectedHref: `${ORDERS_URL}?token=s3cr3t-session-value` },
+    });
+    await expect(claimNavigationCommand(grant.token, nonce)).rejects.toThrow(
+      /not a safe link/,
+    );
+    // The action never left APPROVED — no command was ever handed out.
+    expect(
+      (await db.computerAction.findUniqueOrThrow({ where: { id: action.id } })).status,
+    ).toBe("APPROVED");
+  });
+});
+
 describeDb("acceptance: one approved navigation, then STOP", () => {
   it("walks proposed → approved → executing → executed → VERIFIED", async () => {
     const ctx = await makeCtx("org-a");

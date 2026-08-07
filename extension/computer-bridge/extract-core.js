@@ -115,7 +115,12 @@ export function buildPayload({ url, title, visibleText, elements, captureId }) {
  *
  * Safe = real anchor, https (or loopback http), same-origin as the current
  * page, no new tab, no download, no javascript:/data:/blob:/etc., not a
- * bare fragment.
+ * bare fragment, and NO query or fragment component at all.
+ *
+ * The query/fragment refusal is a privacy rule (C4): those components carry
+ * session ids, tokens and customer identifiers, and Operanto persists page
+ * URLs as origin + pathname only. Links carrying them are rejected, never
+ * stripped-and-navigated.
  */
 
 const LOOPBACK = ["localhost", "127.0.0.1", "::1", "[::1]"];
@@ -146,21 +151,22 @@ export function isSafeNavigationTarget(href, pageUrl, options = {}) {
     }
   }
   if (resolved.origin !== page.origin) return false;
-  if (
-    resolved.hash &&
-    `${resolved.origin}${resolved.pathname}${resolved.search}` ===
-      `${page.origin}${page.pathname}${page.search}`
-  ) {
-    return false;
-  }
+  // Path-only: any query or fragment is refused outright (privacy).
+  if (resolved.search) return false;
+  if (resolved.hash) return false;
   return true;
 }
 
-/** Normalize a URL to the comparable document form (fragment dropped). */
+/**
+ * Normalize a URL for comparison. Origin + pathname only — the same shape
+ * Operanto persists, so a stored observation URL and a live tab URL are
+ * compared on equal terms. Safe targets never carry a query or fragment
+ * anyway (isSafeNavigationTarget refuses them before this is reached).
+ */
 export function documentUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);
-    return `${url.origin}${url.pathname}${url.search}`;
+    return `${url.origin}${url.pathname}`;
   } catch {
     return "";
   }
