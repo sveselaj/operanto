@@ -77,6 +77,7 @@ Checks: `pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm build`.
 - [docs/operanto-product-architecture.md](docs/operanto-product-architecture.md) — one external brand, public capability model, naming rules
 - [docs/operanto-capability-gap-analysis.md](docs/operanto-capability-gap-analysis.md) — capability matrix across main, prototypes, and specs
 - [docs/operanto-target-architecture.md](docs/operanto-target-architecture.md) — bounded capabilities and consolidation rules
+- [docs/operanto-computer-program-status.md](docs/operanto-computer-program-status.md) — **Computer program status**: what is on main, what is switched off, gates that hold, and what remains (start here)
 - [docs/operanto-computer-capability.md](docs/operanto-computer-capability.md) — Computer capability ADR: API-first execution routing, R0–R4 risk ladder, governance reuse (documented, dormant)
 - [docs/operanto-computer-c1.md](docs/operanto-computer-c1.md) — Computer C1 domain foundation: session/plan/action/snapshot models, risk floors, unified approvals, privacy coverage (dormant, no executor)
 - [docs/operanto-computer-c2.md](docs/operanto-computer-c2.md) — Computer C2 browser bridge: read-only tab sharing via MV3 extension, session-bound tokens, server-side sanitization, dev-DB migration guard (flag-gated off)
