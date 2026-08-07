@@ -290,10 +290,13 @@ Built last, on the shared spine — **not an isolated content generator**:
 - **Permissions** (additive to the 3-role matrix; expansion to more roles is
   a product decision): `conversations:view_all | view_assigned | reply |
   assign | manage`, `channels:manage`, `ai:run`, `approvals:decide`,
-  `growth:manage`, `templates:manage`. Computer C0 additionally
-  *reserves* (names only, nothing in `src/lib/rbac.ts` until C1):
-  `computer:read | operate | approve | admin` — see
-  `docs/operanto-computer-capability.md` §10.
+  `growth:manage`, `templates:manage`. Computer (since C1):
+  `computer:read` and `computer:operate` exist in `src/lib/rbac.ts`
+  (ADMIN + SUPERVISOR); `computer:approve` was **not** created —
+  decisions on Computer approvals reuse `approvals:decide`; and
+  `computer:admin` stays deferred until an actual configuration surface
+  requires it. Decision history: `docs/operanto-computer-capability.md`
+  §10 and `docs/operanto-computer-c1.md`.
 - **Privacy** (decision 9): `eraseCustomer` gains surfaces — Conversation
   subject/summary, Message bodies + attachments (blob deletion),
   ConversationNote, AIAction input/output, CustomerIdentity. Message-payload
