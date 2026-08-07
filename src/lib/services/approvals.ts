@@ -59,8 +59,16 @@ export async function editApprovalDraft(
   if (!trimmed || trimmed.length > MAX_REPLY_LENGTH) {
     throw new Error(`Draft must be 1–${MAX_REPLY_LENGTH} characters`);
   }
+  // Only reply drafts are editable. A Computer action proposal is decided
+  // as proposed or rejected — rewriting a typed action at the approval
+  // gate would approve something nobody proposed.
   const updated = await prisma.approvalRequest.updateMany({
-    where: { ...scope(ctx), id: approvalId, status: "PENDING" },
+    where: {
+      ...scope(ctx),
+      id: approvalId,
+      status: "PENDING",
+      sourceType: "AI_REPLY_DRAFT",
+    },
     data: { editedPayload: { reply: trimmed } as Prisma.InputJsonValue },
   });
   if (updated.count === 0) throw new Error("Approval request is no longer pending");
@@ -110,12 +118,23 @@ export async function decideApproval(
     throw new Error("This request has already been decided");
   }
 
-  await prisma.aIAction.updateMany({
-    where: { ...scope(ctx), id: existing.sourceId },
-    data: { status: decision },
-  });
+  // Mirror the decision onto the source record — per source type, through
+  // the same claimed gate. Computer actions may only leave APPROVAL_PENDING
+  // through this decision (or cancellation), so the mirror is conditional.
+  if (existing.sourceType === "AI_REPLY_DRAFT") {
+    await prisma.aIAction.updateMany({
+      where: { ...scope(ctx), id: existing.sourceId },
+      data: { status: decision },
+    });
+  } else if (existing.sourceType === "COMPUTER_ACTION") {
+    await prisma.computerAction.updateMany({
+      where: { ...scope(ctx), id: existing.sourceId, status: "APPROVAL_PENDING" },
+      data: { status: decision, decidedAt: new Date() },
+    });
+  }
 
   if (existing.conversationId) {
+    const isComputer = existing.sourceType === "COMPUTER_ACTION";
     await prisma.activity.create({
       data: {
         organisationId: ctx.organisation.id,
@@ -123,13 +142,23 @@ export async function decideApproval(
         actorType: "STAFF",
         actorUserId: ctx.user.id,
         actorMembershipId: ctx.membership.id,
-        activityType:
-          decision === "APPROVED" ? "ai.draft.approved" : "ai.draft.rejected",
-        summary:
-          decision === "APPROVED"
+        activityType: isComputer
+          ? decision === "APPROVED"
+            ? "computer.action.approved"
+            : "computer.action.rejected"
+          : decision === "APPROVED"
+            ? "ai.draft.approved"
+            : "ai.draft.rejected",
+        summary: isComputer
+          ? decision === "APPROVED"
+            ? "Computer action approved"
+            : "Computer action rejected"
+          : decision === "APPROVED"
             ? "AI reply draft approved for manual use"
             : "AI reply draft rejected",
-        metadata: { approvalRequestId: existing.id, aiActionId: existing.sourceId },
+        metadata: isComputer
+          ? { approvalRequestId: existing.id, computerActionId: existing.sourceId }
+          : { approvalRequestId: existing.id, aiActionId: existing.sourceId },
       },
     });
   }
@@ -147,12 +176,24 @@ export async function decideApproval(
       lowConfidenceAcknowledged: options.acknowledgeLowConfidence ?? false,
     },
   });
-  await audit(ctx, {
-    eventType: decision === "APPROVED" ? "ai.draft.approved" : "ai.draft.rejected",
-    targetType: "AIAction",
-    targetId: existing.sourceId,
-    after: { approvalRequestId: existing.id, conversationId: existing.conversationId },
-  });
+  if (existing.sourceType === "COMPUTER_ACTION") {
+    await audit(ctx, {
+      eventType:
+        decision === "APPROVED"
+          ? "computer.action.approved"
+          : "computer.action.rejected",
+      targetType: "ComputerAction",
+      targetId: existing.sourceId,
+      after: { approvalRequestId: existing.id, conversationId: existing.conversationId },
+    });
+  } else {
+    await audit(ctx, {
+      eventType: decision === "APPROVED" ? "ai.draft.approved" : "ai.draft.rejected",
+      targetType: "AIAction",
+      targetId: existing.sourceId,
+      after: { approvalRequestId: existing.id, conversationId: existing.conversationId },
+    });
+  }
 
   return prisma.approvalRequest.findFirstOrThrow({
     where: { ...scope(ctx), id: approvalId },
@@ -169,8 +210,15 @@ export async function applyApprovedDraft(
   approvalId: string,
 ): Promise<void> {
   requirePermission(ctx.membership.role, "conversations:message");
+  // sourceType-guarded: an approved COMPUTER_ACTION is not a draft and must
+  // never be recordable as a conversation message.
   const existing = await prisma.approvalRequest.findFirst({
-    where: { ...scope(ctx), id: approvalId, status: "APPROVED" },
+    where: {
+      ...scope(ctx),
+      id: approvalId,
+      status: "APPROVED",
+      sourceType: "AI_REPLY_DRAFT",
+    },
   });
   if (!existing || !existing.conversationId) {
     throw new Error("No approved draft to apply");

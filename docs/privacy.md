@@ -17,6 +17,7 @@ not compliance, it is a false record of compliance.
 | `InboundEvent.rawPayload` | a **verbatim copy of the whole original event**, including name, email, phone and free text |
 | `AuditEvent` | who did what — plus, for staff actions, whatever free text they typed (a task title) and the source lead id |
 | `Opportunity.sourceOpportunityId`, `ExternalIdentityMapping` | the Pronatona lead id — not personal data by itself, but a key that re-identifies the person in the source system |
+| `ComputerSession` / `ComputerPlan` / `ComputerStep` / `ComputerAction` / `ComputerSnapshot` (C1, dormant) | session goal, plan summaries, step titles, action rationale and semantic targets, snapshot URL/title/visible-text — customer context in the operator's or agent's words. Erasure redacts the whole graph (plus `COMPUTER_ACTION` approval payloads); retention follows the per-organisation message window (`redactExpiredComputerContent`); restriction blocks new sessions for the customer and pauses disposal |
 
 The raw event payload is the surface people forget. It exists so a failed
 event can be replayed and debugged, and it holds everything.

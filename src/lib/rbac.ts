@@ -45,6 +45,16 @@ export type Permission =
   | "ai:configure"
   | "approvals:read"
   | "approvals:decide"
+  /* ── Computer C1 (domain foundation, dormant — no executor exists).
+   *    Colon family like the ai and approvals permissions — Computer is a
+   *    platform capability, not part of the crm.* dot program. Approval
+   *    decisions on Computer actions deliberately reuse approvals:decide
+   *    (one approval authority, per the C0 ADR); computer:approve and
+   *    computer:admin were NOT created — no surface enforces them in C1. */
+  /** View Computer sessions, plans, actions and snapshots. */
+  | "computer:read"
+  /** Create sessions, propose plans/actions, record snapshots/verification. */
+  | "computer:operate"
   /** Channel connection administration and health. */
   | "channels:manage"
   /** Connect a provider account and store its (encrypted) credential. */
@@ -126,6 +136,8 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "ai:configure",
     "approvals:read",
     "approvals:decide",
+    "computer:read",
+    "computer:operate",
     "channels:manage",
     "channels:connect",
     "messages:send",
@@ -182,6 +194,8 @@ const MATRIX: Record<MembershipRole, Permission[]> = {
     "ai:read",
     "approvals:read",
     "approvals:decide",
+    "computer:read",
+    "computer:operate",
     "messages:send",
     "templates:manage",
     "consent:manage",

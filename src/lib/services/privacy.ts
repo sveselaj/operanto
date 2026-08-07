@@ -44,6 +44,7 @@ export type ErasureResult = {
   messages: number;
   channelIdentities: number;
   aiActions: number;
+  computerSessions: number;
 };
 
 /**
@@ -273,6 +274,86 @@ export async function eraseCustomer(
           },
         });
       }
+      // Computer C1: sessions carry the customer's goal text, plans/steps
+      // the derived intent, actions the rationale and semantic targets,
+      // snapshots the observed page identity and visible text. All of it is
+      // customer-derived where the session is customer- or conversation-
+      // linked, so it goes the way of the messages. Operational shells
+      // (statuses, risk tiers, timestamps) survive.
+      const computerSessionRows = await tx.computerSession.findMany({
+        where: {
+          ...scope(ctx),
+          OR: [
+            { customerId: customer.id },
+            ...(conversationIds.length > 0
+              ? [{ conversationId: { in: conversationIds } }]
+              : []),
+          ],
+        },
+        select: { id: true },
+      });
+      const computerSessionIds = computerSessionRows.map((row) => row.id);
+      let computerSessions = 0;
+      if (computerSessionIds.length > 0) {
+        computerSessions = (
+          await tx.computerSession.updateMany({
+            where: { id: { in: computerSessionIds } },
+            data: { goal: ERASED_TEXT, outcomeNote: null, redactedAt: new Date() },
+          })
+        ).count;
+        await tx.computerPlan.updateMany({
+          where: { sessionId: { in: computerSessionIds } },
+          data: { summary: ERASED_TEXT, redactedAt: new Date() },
+        });
+        await tx.computerStep.updateMany({
+          where: { plan: { sessionId: { in: computerSessionIds } } },
+          data: { title: ERASED_TEXT, redactedAt: new Date() },
+        });
+        await tx.computerAction.updateMany({
+          where: { sessionId: { in: computerSessionIds } },
+          data: {
+            reason: ERASED_TEXT,
+            targetJson: Prisma.DbNull,
+            verificationNote: null,
+            redactedAt: new Date(),
+          },
+        });
+        await tx.computerSnapshot.updateMany({
+          where: { sessionId: { in: computerSessionIds } },
+          data: {
+            url: null,
+            pageTitle: null,
+            visibleTextSummary: ERASED_TEXT,
+            semanticJson: Prisma.DbNull,
+            redactedAt: new Date(),
+          },
+        });
+        // Computer approval payloads duplicate the action's reason/target.
+        // Conversation-linked ones were redacted above; customer-only
+        // sessions have approvals without a conversation anchor, so sweep
+        // by source action id.
+        const actionRows = await tx.computerAction.findMany({
+          where: { sessionId: { in: computerSessionIds } },
+          select: { id: true },
+        });
+        if (actionRows.length > 0) {
+          await tx.approvalRequest.updateMany({
+            where: {
+              ...scope(ctx),
+              sourceType: "COMPUTER_ACTION",
+              sourceId: { in: actionRows.map((row) => row.id) },
+              redactedAt: null,
+            },
+            data: {
+              originalPayload: { redacted: true },
+              editedPayload: Prisma.DbNull,
+              decisionReason: null,
+              redactedAt: new Date(),
+            },
+          });
+        }
+      }
+
       // Dead-lettered or failed channel events may never have projected, so
       // they carry no conversation anchor. Scan the organisation's small set
       // of unattributed, unredacted events for the erased identity keys —
@@ -396,6 +477,7 @@ export async function eraseCustomer(
         messages,
         channelIdentities: identities.count,
         aiActions: aiActions.count,
+        computerSessions,
       };
     },
     { timeout: 30_000, maxWait: 10_000 },
@@ -416,6 +498,7 @@ export async function eraseCustomer(
       messagesRedacted: result.messages,
       channelIdentitiesDeleted: result.channelIdentities,
       aiActionsRedacted: result.aiActions,
+      computerSessionsRedacted: result.computerSessions,
     },
   });
 
@@ -575,6 +658,130 @@ export async function redactExpiredMessages(): Promise<{
   }
 
   return { organisations: organisations.length, redacted, aiRedacted };
+}
+
+/**
+ * Retention sweep for Computer C1 content — goals, plan summaries, step
+ * titles, action rationales/targets, snapshot page identity and visible
+ * text. Same per-organisation message window as messages and AI outputs
+ * (Computer context never outlives the conversations it served), and the
+ * same Art. 18 rule: a restricted customer's sessions are held untouched.
+ * Approval payloads for computer actions are swept by source id because
+ * customer-only sessions have no conversation anchor for the message sweep
+ * to find.
+ */
+export async function redactExpiredComputerContent(): Promise<{
+  organisations: number;
+  redacted: number;
+}> {
+  const organisations = await prisma.organisation.findMany({
+    select: { id: true, messageRetentionDays: true },
+  });
+
+  let redacted = 0;
+  for (const organisation of organisations) {
+    const retentionDays = messageRetentionDays(organisation.messageRetentionDays);
+    const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+    const notRestricted = {
+      OR: [{ customerId: null }, { customer: { restrictedAt: null } }],
+    };
+    const sessionResult = await prisma.computerSession.updateMany({
+      where: {
+        organisationId: organisation.id,
+        redactedAt: null,
+        createdAt: { lt: cutoff },
+        ...notRestricted,
+      },
+      data: {
+        goal: RETENTION_EXPIRED_TEXT,
+        outcomeNote: null,
+        redactedAt: new Date(),
+      },
+    });
+    const planResult = await prisma.computerPlan.updateMany({
+      where: {
+        organisationId: organisation.id,
+        redactedAt: null,
+        createdAt: { lt: cutoff },
+        session: notRestricted,
+      },
+      data: { summary: RETENTION_EXPIRED_TEXT, redactedAt: new Date() },
+    });
+    const stepResult = await prisma.computerStep.updateMany({
+      where: {
+        organisationId: organisation.id,
+        redactedAt: null,
+        createdAt: { lt: cutoff },
+        plan: { session: notRestricted },
+      },
+      data: { title: RETENTION_EXPIRED_TEXT, redactedAt: new Date() },
+    });
+    const actionResult = await prisma.computerAction.updateMany({
+      where: {
+        organisationId: organisation.id,
+        redactedAt: null,
+        createdAt: { lt: cutoff },
+        session: notRestricted,
+      },
+      data: {
+        reason: RETENTION_EXPIRED_TEXT,
+        targetJson: Prisma.DbNull,
+        verificationNote: null,
+        redactedAt: new Date(),
+      },
+    });
+    const snapshotResult = await prisma.computerSnapshot.updateMany({
+      where: {
+        organisationId: organisation.id,
+        redactedAt: null,
+        createdAt: { lt: cutoff },
+        session: notRestricted,
+      },
+      data: {
+        url: null,
+        pageTitle: null,
+        visibleTextSummary: RETENTION_EXPIRED_TEXT,
+        semanticJson: Prisma.DbNull,
+        redactedAt: new Date(),
+      },
+    });
+    // Approval payload copies, restriction-aware via the source action's
+    // session (ApprovalRequest.sourceId is not a relation, so resolve the
+    // exempt ids first).
+    const restrictedActionRows = await prisma.computerAction.findMany({
+      where: {
+        organisationId: organisation.id,
+        session: { customer: { restrictedAt: { not: null } } },
+      },
+      select: { id: true },
+    });
+    const approvalResult = await prisma.approvalRequest.updateMany({
+      where: {
+        organisationId: organisation.id,
+        sourceType: "COMPUTER_ACTION",
+        redactedAt: null,
+        requestedAt: { lt: cutoff },
+        ...(restrictedActionRows.length > 0
+          ? { sourceId: { notIn: restrictedActionRows.map((row) => row.id) } }
+          : {}),
+      },
+      data: {
+        originalPayload: { expired: true },
+        editedPayload: Prisma.DbNull,
+        decisionReason: null,
+        redactedAt: new Date(),
+      },
+    });
+    redacted +=
+      sessionResult.count +
+      planResult.count +
+      stepResult.count +
+      actionResult.count +
+      snapshotResult.count +
+      approvalResult.count;
+  }
+
+  return { organisations: organisations.length, redacted };
 }
 
 /**
