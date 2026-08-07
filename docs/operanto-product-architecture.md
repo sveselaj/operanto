@@ -42,13 +42,15 @@ are preferred; page headings may use the full form ("Operanto Conversations").
 | **Operanto Workflows** | Tasks, approvals, assignments, follow-ups, escalations, CRM actions, service and commerce workflows, audit trails |
 | **Operanto Intelligence** | Intent and customer recognition, next-best-action, opportunity detection, conversation analysis, AI-human coordination, operational insights |
 | **Operanto Growth** | Brand intelligence, campaigns, social content, emails, advertisements, multilingual content, promotions, lead reactivation |
+| **Operanto Computer** | Governed observation and operation of external software interfaces (browser-based systems without a suitable API), always inside approvals, audit, and human control |
 | **Operanto Integrations** | CRM, ERP, e-commerce, social media, messaging, ticketing, calendars, logistics, payments, custom APIs |
 
 Today's cockpit (customers, opportunities, tasks, activity, the Pronatona
 integration, audit) lives inside Memory, Workflows, Intelligence, and
 Integrations. Conversations and Growth are reserved capability names for
 surfaces that are not yet in the current product; ship them under these names,
-not under new brands.
+not under new brands. Computer is likewise reserved (C0, 2026-08-07 —
+documented, dormant; see `docs/operanto-computer-capability.md`).
 
 Any customer-facing architecture diagram shows Operanto with its capabilities:
 
@@ -58,6 +60,7 @@ Operanto
 ├── Conversations
 ├── Workflows
 ├── Intelligence
+├── Computer
 ├── Growth
 └── Integrations
 ```
