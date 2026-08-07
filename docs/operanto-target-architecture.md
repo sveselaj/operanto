@@ -15,6 +15,7 @@ Operanto
 ├── Conversations   channels → normalized messages → unified inbox → handover
 ├── Workflows       tasks, approvals, escalations, (later) workflow definitions
 ├── Intelligence    AI tasks + typed tool gateway + approval gates + AIAction audit
+├── Computer        governed operation of software UIs where no API suffices (C0: docs only)
 ├── Growth          brand profile, campaigns, content — on shared context
 └── Integrations    signed domain events (Pronatona, …) + channel connectors
 ```
@@ -221,6 +222,45 @@ Architecture (ported from the legacy prototype, adapted to main):
   Conversations (summary, draft, classify), Customers (context), and
   Workflows (suggested tasks).
 
+## Operanto Computer
+
+> C0 (2026-08-07) ratified Computer as a bounded capability —
+> **documentation only**. No code, schema, permission, flag, route, or UI
+> exists; every execution slice requires explicit authorization. Full
+> decision record: `docs/operanto-computer-capability.md`.
+
+Mission: allow Operanto to safely observe and operate software interfaces
+when a trusted deterministic or API integration does not exist or is
+insufficient. Computer is **another execution mechanism, not another
+product** — the canonical loop (conversation → context → intelligence →
+plan → execution → verify → outcome → memory) stays unchanged, and each
+plan step routes to exactly one of:
+
+```text
+native Operanto tool | API connector | Computer | human
+```
+
+in that order of preference — **API-first, computer-capable**: where a
+reliable API exists, routing that operation through a browser is a
+defect.
+
+Rules (details and the R0–R4 risk ladder in the ADR):
+
+- Same spine, no parallel frameworks: tenancy, RBAC, record scope,
+  `AIAction`, the unified `ApprovalRequest`, ids-only audit, privacy
+  lifecycle, constraint-based idempotency, budgets, human takeover.
+- The model proposes typed actions; the deterministic layer disposes.
+  Ambiguity, unknown tenant, or unclassifiable policy → fail closed.
+- Observation is semantic (DOM + accessibility roles + visible text +
+  vision); coordinate clicking is a last-resort fallback, never the
+  addressing model. Page content is data, never instructions.
+- Commits (R3) always gate through `ApprovalRequest`; restricted actions
+  (R4: money movement, credential/2FA changes, destructive operations)
+  are never executed by Computer — the human performs the final act.
+- Sequencing: Computer execution slices arrive *inside* the Guarded
+  Agent Runtime discipline (`docs/operanto-agent-runtime-conversation.md`)
+  as a capability pack of tools; the 2026-08-02 gate holds.
+
 ## Operanto Growth
 
 Responsibilities: editable brand profile, product/service knowledge,
@@ -242,7 +282,10 @@ Built last, on the shared spine — **not an isolated content generator**:
 - **Permissions** (additive to the 3-role matrix; expansion to more roles is
   a product decision): `conversations:view_all | view_assigned | reply |
   assign | manage`, `channels:manage`, `ai:run`, `approvals:decide`,
-  `growth:manage`, `templates:manage`.
+  `growth:manage`, `templates:manage`. Computer C0 additionally
+  *reserves* (names only, nothing in `src/lib/rbac.ts` until C1):
+  `computer:read | operate | approve | admin` — see
+  `docs/operanto-computer-capability.md` §10.
 - **Privacy** (decision 9): `eraseCustomer` gains surfaces — Conversation
   subject/summary, Message bodies + attachments (blob deletion),
   ConversationNote, AIAction input/output, CustomerIdentity. Message-payload
@@ -280,3 +323,10 @@ Growth Prospecting Program G1+G2 delivered (flag-gated, no external
 execution): 13 org-scoped Growth entities, 17 permissions, lifecycle
 machine, staged CSV import with constraint-backed dedupe, suppression and
 privacy lifecycle integration. See docs/operanto-growth-g2.md.
+
+## Amendment addendum (2026-08-07)
+
+Computer C0 ratified: Computer joins the capability tree as a bounded
+capability, documentation only — no code, schema, permissions, flags, or
+UI. Decision record, risk ladder (R0–R4), governance mapping, and
+deferred C1/C2 direction: docs/operanto-computer-capability.md.
