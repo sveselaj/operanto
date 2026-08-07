@@ -7,18 +7,32 @@ import type {
 /**
  * Deterministic grounding validation (Computer C3).
  *
- * The model is untrusted-adjacent: it read hostile page content and may
- * hallucinate. Valid JSON is not truth. Before anything is persisted or
- * shown, every claim that cites the snapshot is checked AGAINST the
- * snapshot, and every suggested element is bound to observed reality:
+ * WHAT THIS PROVES — AND DELIBERATELY DOES NOT PROVE:
+ *
+ * It proves EVIDENCE PRESENCE: cited evidence exists verbatim (element)
+ * or as a substring (text/title/url) in the snapshot, and a suggested
+ * element resolves to exactly one really-observed element. It does NOT
+ * prove natural-language CLAIM ENTAILMENT — a false claim citing real
+ * evidence ("the transfer succeeded", evidence "SWIFT") passes the
+ * evidence check. The product semantics are therefore explicit:
+ *
+ *   OBSERVED       = the verbatim evidence from the snapshot (verified)
+ *   INTERPRETATION = the model's claim ABOUT that evidence (not verified)
+ *   INFERENCE      = conclusions combining evidence and context
+ *   GUIDANCE       = a recommendation for the human
+ *
+ * The report carries `verifies: "EVIDENCE_PRESENCE_ONLY"` so no consumer
+ * can honestly present claims as deterministically proven. Future
+ * execution must NEVER bind to claim/summary/pagePurpose/inference/
+ * suggestedNextStep free text — the only machine-usable binding this
+ * module produces is the deterministically bound ELEMENT:
  *
  *   THE MODEL MAY RECOMMEND A TARGET;
  *   DETERMINISTIC CODE BINDS IT TO WHAT WAS ACTUALLY OBSERVED.
  *
  * Ungrounded facts are removed (with a visible limitation), a fabricated
  * or ambiguous target is stripped, and any removal caps confidence at 0.5
- * — low confidence narrows guidance, it never widens it. This is the
- * invariant C4-style navigation would later depend on.
+ * — low confidence narrows guidance, it never widens it.
  */
 
 export type GroundingSnapshot = {
@@ -31,6 +45,8 @@ export type GroundingSnapshot = {
 export type TargetResolution = "NONE" | "BOUND" | "AMBIGUOUS" | "NOT_FOUND";
 
 export type GroundingReport = {
+  /** What this validation establishes — never claim-level truth. */
+  verifies: "EVIDENCE_PRESENCE_ONLY";
   factsChecked: number;
   factsRemoved: number;
   target: TargetResolution;
@@ -130,6 +146,7 @@ export function groundUnderstanding<T extends ComputerUnderstandOutput>(
   return {
     output: groundedOutput,
     report: {
+      verifies: "EVIDENCE_PRESENCE_ONLY",
       factsChecked: output.observedFacts.length,
       factsRemoved: removed,
       target,

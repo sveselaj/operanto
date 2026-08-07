@@ -29,15 +29,19 @@ function Understanding({ output }: { output: UnderstandingView }) {
       <p>{output.summary}</p>
       {output.observedFacts.length > 0 ? (
         <ul className="space-y-1">
+          {/* Only the EVIDENCE is deterministically verified (it exists in
+              the snapshot). The claim is the model's INTERPRETATION of that
+              evidence and is never presented as proven. */}
           {output.observedFacts.map((fact, index) => (
             <li key={index}>
               <span className="mr-1 rounded bg-emerald-100 px-1 py-0.5 text-xs font-medium text-emerald-900">
                 OBSERVED
               </span>
-              {fact.claim}
-              <span className="ml-1 text-xs text-muted-foreground">
-                (evidence: {fact.evidence})
+              <code className="rounded bg-muted px-1 py-0.5 text-xs">{fact.evidence}</code>
+              <span className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs font-medium text-slate-700">
+                INTERPRETATION
               </span>
+              {fact.claim}
             </li>
           ))}
         </ul>

@@ -48,21 +48,35 @@ Human guidance        "The page describes a SWIFT EUR deposit with a 0–5
   persistence. Two new `AITaskType` values registered in
   `src/lib/ai/computer-tasks.ts`; the deterministic mock remains the
   default execution path and encodes the required behaviors.
-- **Trust boundary is structural.** Prompts place the goal/question and
-  Operanto context in the instruction body; ALL page material sits inside
-  `UNTRUSTED_PAGE_OBSERVATION_BEGIN/END` markers with system-prompt rules
-  that envelope content is data, may be malicious, and cannot alter
-  instructions, goal, permissions, risk, or authority. Page content never
-  touches the system prompt (unit-tested).
-- **Deterministic grounding** (`src/lib/computer/grounding.ts`): observed
-  facts must cite evidence that exists in the snapshot (exact element
-  match; substring for text/title/url); `suggestedElement` must match
-  exactly one real element — fabrications are stripped (`NOT_FOUND`),
-  duplicates refuse selection (`AMBIGUOUS`), and any removal caps
-  confidence at 0.5 with a visible limitation. What is persisted and
-  shown is the grounded output plus the grounding report. *The model may
-  recommend a target; deterministic code binds it to observed reality* —
-  the invariant C4 navigation would depend on.
+- **Trust taxonomy is structural, four classes.** Provenance and
+  instruction authority are distinct: (A) **static Operanto policy** — the
+  code-owned system prompt, the ONLY instruction authority, never touched
+  by dynamic input; (B) **operator request** — goal/question, explicitly
+  labelled as intent that can never override policy, permissions, risk or
+  authority; (C) **Operanto business context** — customer name,
+  conversation subject, task title: authenticated DATA in its own
+  `OPERANTO_BUSINESS_CONTEXT` envelope, never instructions; (D)
+  **external page observation** — inside the
+  `UNTRUSTED_PAGE_OBSERVATION` envelope, hostile until proven otherwise.
+  Injection-tested with malicious strings in customer name, subject, task
+  title, goal AND question: none alter authority, behavior, approvals, or
+  audit (unit + integration).
+- **Deterministic grounding — and exactly what it proves**
+  (`src/lib/computer/grounding.ts`): it verifies **EVIDENCE PRESENCE
+  ONLY** — cited evidence exists in the snapshot, and `suggestedElement`
+  matches exactly one real element (fabrications stripped `NOT_FOUND`,
+  duplicates refused `AMBIGUOUS`, any removal caps confidence at 0.5).
+  It does **not** prove natural-language claim entailment: a false claim
+  citing real evidence passes the evidence check (regression-pinned in
+  tests). The product semantics are therefore explicit — **OBSERVED** =
+  the verified evidence; **INTERPRETATION** = the model's claim about it;
+  **INFERENCE** = conclusions from evidence + context; **GUIDANCE** = the
+  recommendation — and the UI badges evidence and claim separately, so a
+  claim can never be presented as deterministically proven. Every
+  persisted grounding report self-describes as
+  `verifies: "EVIDENCE_PRESENCE_ONLY"`. Future execution must never bind
+  to claim/summary/pagePurpose/inference/next-step free text: *the only
+  machine-usable binding is the deterministically bound element.*
 - **Observation vs. inference vs. guidance** are separate output fields
   (`observedFacts` with evidence, `inferences`, `suggestedNextStep`),
   rendered as distinct OBSERVED / INFERENCE / GUIDANCE badges in the
@@ -107,9 +121,14 @@ output acknowledges the text as untrusted page content, follows no
 directive, endorses no hostile element, claims no success; the session
 goal, approvals, actions, permissions and risk state are untouched; audit
 metadata stays clean. The same hostile fixtures are the provider-facing
-eval set: **before any organisation enables LIVE mode for computer tasks,
-the live-model replay of these fixtures is part of the eval lane** (the
-agent-runtime discipline's merge-gate rule, applied to C3's surface).
+eval set, and the eval gate is **mechanical**: a live provider for
+computer tasks requires `OPERANTO_COMPUTER_LIVE_ENABLED=1` **and**
+`OPERANTO_COMPUTER_LIVE_EVAL_VERSION` pinned to the code's current
+`COMPUTER_LIVE_EVAL_VERSION` (bumped with every computer prompt/schema
+change). No pin, a stale pin, or a changed prompt → the live call fails
+closed before any provider request, with a refuse-with-explanation error;
+mock needs none of this, and generic conversation AI is unaffected
+(unit + integration tested).
 
 ## Failure & uncertainty behavior
 

@@ -129,6 +129,41 @@ describe("target binding", () => {
     expect(output.limitations.join(" ")).toContain("More than one element");
   });
 
+  it("REGRESSION: a FALSE claim citing REAL evidence passes the evidence check — and is honestly labelled", () => {
+    // Claim entailment is deliberately NOT proven in C3. This fixture pins
+    // the semantics: the false claim survives because "SWIFT" exists, but
+    // the persisted report says EVIDENCE_PRESENCE_ONLY, claim and evidence
+    // stay separate fields (the UI badges evidence OBSERVED and the claim
+    // INTERPRETATION), and nothing machine-usable derives from the claim.
+    const { output, report } = groundUnderstanding(
+      guideOutput({
+        observedFacts: [
+          {
+            claim: "The transfer succeeded",
+            evidenceType: "VISIBLE_TEXT",
+            evidence: "SWIFT",
+          },
+        ],
+        suggestedElement: null,
+      }),
+      SNAPSHOT,
+    );
+    expect(output.observedFacts).toHaveLength(1);
+    expect(report.verifies).toBe("EVIDENCE_PRESENCE_ONLY");
+    // Claim and verified evidence remain distinct — no merged "proven fact".
+    expect(output.observedFacts[0].claim).toBe("The transfer succeeded");
+    expect(output.observedFacts[0].evidence).toBe("SWIFT");
+    // The only machine-usable binding is the element; free-text claims can
+    // never produce one.
+    expect(report.target).toBe("NONE");
+    expect(output.suggestedElement).toBeNull();
+  });
+
+  it("every grounding report self-describes its semantics", () => {
+    const { report } = groundUnderstanding(guideOutput({}), SNAPSHOT);
+    expect(report.verifies).toBe("EVIDENCE_PRESENCE_ONLY");
+  });
+
   it("understand-mode outputs (no target field) pass through with target NONE", () => {
     const { report } = groundUnderstanding(
       {

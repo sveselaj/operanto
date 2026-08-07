@@ -7,13 +7,14 @@ import { audit } from "@/lib/audit";
 import { AIError, type AITaskDefinition } from "@/lib/ai/types";
 import {
   COMPUTER_AI_TASKS,
+  COMPUTER_LIVE_EVAL_VERSION,
   describeComputerInput,
   type ComputerAIInput,
   type ComputerAiTaskType,
   type ComputerUnderstandOutput,
 } from "@/lib/ai/computer-tasks";
 import { groundUnderstanding } from "@/lib/computer/grounding";
-import { computerGuideEnabled } from "@/lib/computer-flag";
+import { computerGuideEnabled, computerLiveApproved } from "@/lib/computer-flag";
 import { providerFor } from "@/lib/services/ai";
 import { finalizeAiUsage, reserveAiUsage } from "@/lib/services/ai-config";
 
@@ -123,6 +124,23 @@ export async function runComputerAiTask(
   }
 
   const provider = providerFor(config);
+  if (provider.name !== "mock" && !computerLiveApproved(COMPUTER_LIVE_EVAL_VERSION)) {
+    // Mechanical eval gate: a live provider for COMPUTER tasks requires the
+    // deployment to pin the exact current eval version after rerunning the
+    // live injection-fixture suite. Fails closed BEFORE any provider call;
+    // refuse-with-explanation, never silent mock degradation. Conversation
+    // tasks are unaffected.
+    await audit(ctx, {
+      eventType: "computer.understanding.failed",
+      targetType: "ComputerSession",
+      targetId: session.id,
+      after: { taskType, errorCode: "LIVE_EVAL_GATE" },
+    });
+    throw new AIError(
+      "NOT_CONFIGURED",
+      `Live computer AI requires the eval gate: set OPERANTO_COMPUTER_LIVE_ENABLED=1 and pin OPERANTO_COMPUTER_LIVE_EVAL_VERSION=${COMPUTER_LIVE_EVAL_VERSION} after rerunning the live injection fixtures`,
+    );
+  }
   const model =
     provider.name === "mock"
       ? "mock"
