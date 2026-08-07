@@ -20,7 +20,8 @@
     "db:studio": "prisma studio",
     "test:e2e:remote": "playwright test",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "simulate:conversation": "tsx scripts/simulate-conversation.ts"
+    "simulate:conversation": "tsx scripts/simulate-conversation.ts",
+    "computer:validation-report": "tsx scripts/computer-validation-report.ts"
   },
   "dependencies": {
     "@date-fns/tz": "^1.5.0",

@@ -5,7 +5,11 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/rbac";
 import { scope, type OrgContext } from "@/lib/org-context";
 import { audit, auditSystem } from "@/lib/audit";
-import { computerNavigationEnabled } from "@/lib/computer-flag";
+import {
+  computerNavigationEnabled,
+  computerValidationCampaign,
+} from "@/lib/computer-flag";
+import type { ValidationFailure } from "@/lib/computer/validation";
 import {
   OPEN_SESSION_STATUSES,
   approvalRiskLevelFor,
@@ -52,6 +56,32 @@ function readSafeLinks(value: Prisma.JsonValue | null): SafeLink[] {
   if (!value) return [];
   const parsed = safeLinksSchema.safeParse(value);
   return parsed.success ? parsed.data : [];
+}
+
+/**
+ * Record a REFUSAL. C4 previously failed closed silently, which left no
+ * trace of a replayed credential or a cross-tenant claim attempt — a
+ * security-observability gap as much as a validation one. The reason is a
+ * bounded enum from the validation taxonomy; arbitrary exception messages
+ * are never recorded. Metadata stays ids + enums: no URL, href, element
+ * name, page text or token ever enters an audit row.
+ */
+async function auditRefusal(
+  organisationId: string,
+  reason: ValidationFailure,
+  refs: { sessionId?: string | null; actionId?: string | null; bridgeId?: string | null },
+): Promise<void> {
+  await auditSystem(organisationId, "SYSTEM", {
+    eventType: "computer.navigation.refused",
+    targetType: refs.actionId ? "ComputerAction" : "ComputerSession",
+    targetId: refs.actionId ?? refs.sessionId ?? undefined,
+    after: {
+      reason,
+      sessionId: refs.sessionId ?? null,
+      bridgeId: refs.bridgeId ?? null,
+    },
+    correlationId: computerValidationCampaign() ?? undefined,
+  });
 }
 
 export class NavigationError extends Error {
@@ -112,6 +142,9 @@ export async function proposeSafeNavigation(
   });
   if (!snapshot) throw new Error("Capture a page before proposing navigation");
   if (Date.now() - snapshot.createdAt.getTime() > SNAPSHOT_FRESHNESS_MS) {
+    await auditRefusal(ctx.organisation.id, "STALE_SNAPSHOT", {
+      sessionId: session.id,
+    });
     throw new NavigationError(
       "STALE_SNAPSHOT",
       "The observation is too old to act on — capture the page again",
@@ -130,11 +163,19 @@ export async function proposeSafeNavigation(
     select: { id: true },
   });
   if (!bridge) {
+    await auditRefusal(ctx.organisation.id, "BRIDGE_DETACHED", {
+      sessionId: session.id,
+    });
     throw new NavigationError("BRIDGE_NOT_ATTACHED", "The browser bridge is not attached");
   }
 
   const resolved = resolveSafeLink(readSafeLinks(snapshot.safeLinksJson), target);
   if (!resolved.ok) {
+    await auditRefusal(
+      ctx.organisation.id,
+      resolved.reason === "AMBIGUOUS" ? "AMBIGUOUS_TARGET" : "TARGET_NOT_FOUND",
+      { sessionId: session.id },
+    );
     throw new NavigationError(
       resolved.reason === "AMBIGUOUS" ? "TARGET_AMBIGUOUS" : "TARGET_NOT_FOUND",
       resolved.reason === "AMBIGUOUS"
@@ -149,6 +190,9 @@ export async function proposeSafeNavigation(
     pageUrl: resolved.link.href,
   });
   if (!verdict.safe) {
+    await auditRefusal(ctx.organisation.id, "POLICY_REJECTED", {
+      sessionId: session.id,
+    });
     throw new NavigationError("UNSAFE_TARGET", "The target is not a safe link");
   }
 
@@ -216,6 +260,7 @@ export async function proposeSafeNavigation(
       // deliberately NOT audited.
       expectedOrigin: verdict.origin,
     },
+    correlationId: computerValidationCampaign() ?? undefined,
   });
   return { action, approvalRequestId };
 }
@@ -261,6 +306,7 @@ export async function issueNavigationNonce(
     targetType: "ComputerAction",
     targetId: action.id,
     after: { expiresAt: expiresAt.toISOString() },
+    correlationId: computerValidationCampaign() ?? undefined,
   });
   return { nonce, expiresAt };
 }
@@ -296,9 +342,17 @@ export async function claimNavigationCommand(
   });
   if (!bridge) throw new BridgeAuthError("Unknown bridge token");
   if (bridge.status !== "ATTACHED" || bridge.expiresAt.getTime() <= Date.now()) {
+    await auditRefusal(bridge.organisationId, "BRIDGE_DETACHED", {
+      sessionId: bridge.sessionId,
+      bridgeId: bridge.id,
+    });
     throw new BridgeAuthError("The bridge is not attached");
   }
   if (!OPEN_SESSION_STATUSES.includes(bridge.session.status)) {
+    await auditRefusal(bridge.organisationId, "BRIDGE_DETACHED", {
+      sessionId: bridge.sessionId,
+      bridgeId: bridge.id,
+    });
     throw new BridgeAuthError("The session is not open");
   }
 
@@ -306,19 +360,43 @@ export async function claimNavigationCommand(
     where: { executionNonceHash: hashNonce(rawNonce) },
     include: { beforeSnapshot: { select: { id: true, url: true, bridgeId: true } } },
   });
-  if (!action) throw new BridgeAuthError("Unknown execution credential");
+  if (!action) {
+    // An unknown credential is either a typo or a probe; either way it is
+    // worth a trace against the bridge that presented it.
+    await auditRefusal(bridge.organisationId, "REPLAYED_CREDENTIAL", {
+      sessionId: bridge.sessionId,
+      bridgeId: bridge.id,
+    });
+    throw new BridgeAuthError("Unknown execution credential");
+  }
   // Cross-tenant / cross-session / cross-tab binding checks.
   if (
     action.organisationId !== bridge.organisationId ||
     action.sessionId !== bridge.sessionId ||
     action.beforeSnapshot?.bridgeId !== bridge.id
   ) {
+    await auditRefusal(bridge.organisationId, "WRONG_TENANT_OR_SESSION", {
+      sessionId: bridge.sessionId,
+      actionId: action.id,
+      bridgeId: bridge.id,
+    });
     throw new BridgeAuthError("The credential does not belong to this bridge");
   }
   if (action.status !== "APPROVED") {
+    // Already EXECUTING/EXECUTED → a replay of a spent credential.
+    await auditRefusal(action.organisationId, "REPLAYED_CREDENTIAL", {
+      sessionId: action.sessionId,
+      actionId: action.id,
+      bridgeId: bridge.id,
+    });
     throw new BridgeAuthError("The action is not approved for execution");
   }
   if (!action.executionExpiresAt || action.executionExpiresAt.getTime() <= Date.now()) {
+    await auditRefusal(action.organisationId, "ACTION_EXPIRED", {
+      sessionId: action.sessionId,
+      actionId: action.id,
+      bridgeId: bridge.id,
+    });
     throw new BridgeAuthError("The execution credential has expired");
   }
   // The approval itself must still be APPROVED and unexpired.
@@ -331,8 +409,20 @@ export async function claimNavigationCommand(
     },
     select: { id: true, expiresAt: true },
   });
-  if (!approval) throw new BridgeAuthError("No valid approval for this action");
+  if (!approval) {
+    await auditRefusal(action.organisationId, "APPROVAL_EXPIRED", {
+      sessionId: action.sessionId,
+      actionId: action.id,
+      bridgeId: bridge.id,
+    });
+    throw new BridgeAuthError("No valid approval for this action");
+  }
   if (approval.expiresAt && approval.expiresAt.getTime() <= Date.now()) {
+    await auditRefusal(action.organisationId, "APPROVAL_EXPIRED", {
+      sessionId: action.sessionId,
+      actionId: action.id,
+      bridgeId: bridge.id,
+    });
     throw new BridgeAuthError("The approval has expired");
   }
   if (!action.expectedHref || !action.expectedOrigin || !action.targetRef) {
@@ -344,6 +434,11 @@ export async function claimNavigationCommand(
     pageUrl: action.expectedHref,
   });
   if (!verdict.safe || verdict.origin !== action.expectedOrigin) {
+    await auditRefusal(action.organisationId, "TARGET_CHANGED", {
+      sessionId: action.sessionId,
+      actionId: action.id,
+      bridgeId: bridge.id,
+    });
     throw new BridgeAuthError("The bound target is not a safe link");
   }
 
@@ -353,6 +448,11 @@ export async function claimNavigationCommand(
     data: { status: "EXECUTING", executionClaimedAt: new Date() },
   });
   if (claimed.count === 0) {
+    await auditRefusal(action.organisationId, "REPLAYED_CREDENTIAL", {
+      sessionId: action.sessionId,
+      actionId: action.id,
+      bridgeId: bridge.id,
+    });
     throw new BridgeAuthError("The execution credential was already used");
   }
   await auditSystem(action.organisationId, "SYSTEM", {
@@ -360,6 +460,7 @@ export async function claimNavigationCommand(
     targetType: "ComputerAction",
     targetId: action.id,
     after: { sessionId: action.sessionId, bridgeId: bridge.id },
+    correlationId: computerValidationCampaign() ?? undefined,
   });
 
   const targetName = (action.targetJson as { name?: string } | null)?.name ?? "";
@@ -419,6 +520,14 @@ export async function reportNavigationResult(
       targetType: "ComputerAction",
       targetId: action.id,
       after: { sessionId: action.sessionId },
+      correlationId: computerValidationCampaign() ?? undefined,
+    });
+    // The extension refusing on its own policy is the most important
+    // signal C4.1 collects: it means server approval alone did not suffice.
+    await auditRefusal(bridge.organisationId, "EXTENSION_REJECTED", {
+      sessionId: action.sessionId,
+      actionId: action.id,
+      bridgeId: bridge.id,
     });
     return { status: "EXECUTION_FAILED", verification: "FAILED" };
   }
@@ -482,6 +591,7 @@ export async function reportNavigationResult(
       afterSnapshotId: after?.id ?? null,
       verification,
     },
+    correlationId: computerValidationCampaign() ?? undefined,
   });
   return {
     status: verification === "FAILED" ? "EXECUTION_FAILED" : "EXECUTED",

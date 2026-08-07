@@ -5,7 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/rbac";
 import { scope, type OrgContext } from "@/lib/org-context";
 import { audit, auditSystem } from "@/lib/audit";
-import { computerBridgeEnabled } from "@/lib/computer-flag";
+import {
+  computerBridgeEnabled,
+  computerValidationCampaign,
+} from "@/lib/computer-flag";
 import {
   BrowserPayloadError,
   sanitizeBrowserPayload,
@@ -975,7 +978,12 @@ export async function recordBridgeSnapshot(
         sessionId: grant.sessionId,
         bridgeId: grant.id,
         elementCount: payload.elements?.length ?? 0,
+        safeLinkCount: payload.safeLinks?.length ?? 0,
+        // C4.1: how many anchor candidates the safe-link policy dropped.
+        // A COUNT only — never which links, never their hrefs.
+        droppedLinkCount: payload.droppedLinkCount,
       },
+      correlationId: computerValidationCampaign() ?? undefined,
     });
     return { snapshotId: snapshot.id, sessionId: grant.sessionId, duplicate: false };
   } catch (error) {
