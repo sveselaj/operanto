@@ -80,6 +80,7 @@ Checks: `pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm build`.
 - [docs/operanto-computer-capability.md](docs/operanto-computer-capability.md) — Computer capability ADR: API-first execution routing, R0–R4 risk ladder, governance reuse (documented, dormant)
 - [docs/operanto-computer-c1.md](docs/operanto-computer-c1.md) — Computer C1 domain foundation: session/plan/action/snapshot models, risk floors, unified approvals, privacy coverage (dormant, no executor)
 - [docs/operanto-computer-c2.md](docs/operanto-computer-c2.md) — Computer C2 browser bridge: read-only tab sharing via MV3 extension, session-bound tokens, server-side sanitization, dev-DB migration guard (flag-gated off)
+- [docs/operanto-computer-c3.md](docs/operanto-computer-c3.md) — Computer C3 page understanding + guide mode: grounded AI answers over shared tabs, deterministic evidence binding, /computer workbench (flag-gated off; guidance only, no execution)
 - [docs/event-schema.md](docs/event-schema.md) — wire contract with Pronatona
 - [docs/security.md](docs/security.md) — threat model, permission matrix, controls
 - [docs/customer-matching.md](docs/customer-matching.md) — exact-match-only policy

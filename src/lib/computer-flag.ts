@@ -8,3 +8,14 @@
 export function computerBridgeEnabled(): boolean {
   return process.env.OPERANTO_COMPUTER_BRIDGE_ENABLED === "1";
 }
+
+/**
+ * Computer guide flag (C3) — page understanding + guide mode. Requires the
+ * bridge too: understanding without an observation source is not a product
+ * surface. Same rules as above: server-side, environment-only, default OFF.
+ */
+export function computerGuideEnabled(): boolean {
+  return (
+    process.env.OPERANTO_COMPUTER_GUIDE_ENABLED === "1" && computerBridgeEnabled()
+  );
+}

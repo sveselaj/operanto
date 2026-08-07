@@ -174,6 +174,7 @@ export async function getComputerSession(ctx: OrgContext, sessionId: string) {
       },
       actions: { orderBy: { createdAt: "asc" } },
       snapshots: { orderBy: { createdAt: "asc" } },
+      bridges: { orderBy: { createdAt: "desc" }, take: 3 },
     },
   });
 }

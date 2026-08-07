@@ -1,5 +1,5 @@
 import "server-only";
-import type { AIAction, AIRiskLevel, AITaskType, Prisma } from "@prisma/client";
+import type { AIAction, AIRiskLevel, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/rbac";
 import { scope, type OrgContext } from "@/lib/org-context";
@@ -32,7 +32,11 @@ import {
 
 const TASK_TIMEOUT_MS = 30_000;
 
-const AUDIT_EVENT: Record<AITaskType, { requested: string; completed: string }> = {
+/** The four conversation-bound tasks this module runs (COMPUTER_* tasks run
+ *  through src/lib/services/computer-understanding.ts on the same spine). */
+type ConversationTaskType = keyof typeof AI_TASKS;
+
+const AUDIT_EVENT: Record<ConversationTaskType, { requested: string; completed: string }> = {
   SUMMARY: { requested: "ai.summary.requested", completed: "ai.summary.completed" },
   CLASSIFICATION: {
     requested: "ai.classification.requested",
@@ -48,7 +52,8 @@ const AUDIT_EVENT: Record<AITaskType, { requested: string; completed: string }> 
   },
 };
 
-function providerFor(config: { mode: string; provider: string }): AIProvider {
+/** Provider selection — shared with the Computer understanding service. */
+export function providerFor(config: { mode: string; provider: string }): AIProvider {
   if (config.mode === "LIVE" && liveModeEnabledForDeployment()) {
     if (config.provider === "openai") return new OpenAIProvider();
     // Unknown live provider names refuse rather than silently mocking.
@@ -60,7 +65,7 @@ function providerFor(config: { mode: string; provider: string }): AIProvider {
 export async function runAiTask(
   ctx: OrgContext,
   conversationId: string,
-  taskType: AITaskType,
+  taskType: ConversationTaskType,
 ): Promise<AIAction> {
   requirePermission(ctx.membership.role, "ai:run");
   // Type-erased view of the registry entry: outputs are handled generically
@@ -276,7 +281,14 @@ export async function listAiActions(ctx: OrgContext, conversationId: string) {
   });
   if (!conversation) throw new Error("Conversation not found");
   return prisma.aIAction.findMany({
-    where: { ...scope(ctx), conversationId },
+    where: {
+      ...scope(ctx),
+      conversationId,
+      // The conversation panel shows conversation tasks; COMPUTER_* results
+      // (which may share a conversationId via their session) live in the
+      // Computer workbench.
+      taskType: { in: ["SUMMARY", "CLASSIFICATION", "REPLY_DRAFT", "NEXT_ACTION"] },
+    },
     orderBy: { createdAt: "desc" },
     take: 12,
     include: {

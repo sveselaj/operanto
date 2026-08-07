@@ -28,6 +28,16 @@ explicit authorization.
 > `docs/operanto-computer-c2.md`. C3 (page understanding / guide mode)
 > and any execution remain unauthorized.
 
+> **C3 addendum (2026-08-07):** page understanding + guide mode was
+> separately authorized and delivered, flag-gated off — two AI tasks on
+> the existing Intelligence spine (AIAction, budgets, mock default) with
+> a structural untrusted-observation envelope, deterministic grounding
+> that binds every claim and suggested element to the captured snapshot,
+> observed/inference/guidance separation, and a minimal `/computer`
+> workbench. Still zero side effects: Operanto may say "check Orders",
+> and cannot click it. See `docs/operanto-computer-c3.md`. C4 (any
+> browser-side effect) remains unauthorized.
+
 ## 1. Problem statement
 
 A large share of the work Operanto is asked to complete lives inside
