@@ -35,3 +35,24 @@ export declare function buildPayload(input: {
   visibleText?: string;
   elements?: Array<{ role: string; name: string }>;
 };
+
+/** C4 safe-navigation policy (extension-side, independent of the server). */
+export declare function isSafeNavigationTarget(
+  href: string,
+  pageUrl: string,
+  options?: { target?: string | null; download?: boolean },
+): boolean;
+export declare function documentUrl(rawUrl: string): string;
+export declare function mayExecuteNavigation(
+  command: {
+    expectedHref: string;
+    expectedOrigin: string;
+    observedUrl?: string | null;
+  } | null,
+  live: {
+    pageUrl: string;
+    foundHref?: string | null;
+    target?: string | null;
+    download?: boolean;
+  } | null,
+): boolean;

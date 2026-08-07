@@ -1,4 +1,4 @@
-import { buildPayload } from "./extract-core.js";
+import { buildPayload, mayExecuteNavigation } from "./extract-core.js";
 
 /**
  * Operanto Computer Bridge popup (C2, read-only).
@@ -53,10 +53,28 @@ function extractPageSemantics() {
     return "";
   };
   const elements = [];
+  const links = [];
+  let linkSeq = 0;
   const nodes = document.querySelectorAll(
     "h1,h2,h3,h4,h5,h6,a[href],button,input,select,textarea,[role]",
   );
   for (const el of nodes) {
+    // C4: collect anchor candidates with a snapshot-scoped ephemeral ref.
+    // The SERVER re-classifies each one; unsafe ones are dropped there.
+    if (el.tagName === "A" && el.getAttribute("href") && links.length < 50) {
+      const linkName = nameOf(el);
+      if (linkName) {
+        const ref = `l${linkSeq++}`;
+        el.setAttribute("data-operanto-ref", ref);
+        links.push({
+          ref,
+          name: linkName,
+          href: el.getAttribute("href"),
+          target: el.getAttribute("target"),
+          download: el.hasAttribute("download"),
+        });
+      }
+    }
     if (elements.length >= LIMITS.elements) break;
     const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
     if (rect && rect.width === 0 && rect.height === 0) continue;
@@ -82,6 +100,36 @@ function extractPageSemantics() {
     title: document.title,
     visibleText: clean(document.body ? document.body.innerText : "", LIMITS.visibleText),
     elements,
+    links,
+  };
+}
+
+/**
+ * C4: re-locate the approved anchor in the LIVE page and report what it
+ * currently is. Reads only — it never navigates. The decision to navigate
+ * is taken in the popup via mayExecuteNavigation(), and the navigation
+ * itself is performed by the extension (chrome.tabs.update), never by
+ * injected script clicking arbitrary elements.
+ */
+function inspectNavigationTarget(targetRef, linkName) {
+  const byRef = document.querySelector(`a[data-operanto-ref="${targetRef}"]`);
+  let anchor = byRef;
+  if (!anchor) {
+    const named = Array.from(document.querySelectorAll("a[href]")).filter((a) => {
+      const label = (a.getAttribute("aria-label") || a.textContent || "")
+        .replace(/\s+/g, " ")
+        .trim();
+      return label === linkName;
+    });
+    // Ambiguity fails closed: never guess which "Orders" the human meant.
+    if (named.length !== 1) return { pageUrl: window.location.href, foundHref: null };
+    anchor = named[0];
+  }
+  return {
+    pageUrl: window.location.href,
+    foundHref: anchor.getAttribute("href"),
+    target: anchor.getAttribute("target"),
+    download: anchor.hasAttribute("download"),
   };
 }
 
@@ -125,6 +173,72 @@ document.getElementById("capture").addEventListener("click", async () => {
       `Snapshot recorded (${stored.duplicate ? "duplicate" : "new"}): ${stored.snapshotId}`,
     );
   } catch (error) {
+    report(`Failed: ${error.message}`);
+  }
+});
+
+/**
+ * C4: execute ONE approved navigation. The operator pastes the one-shot
+ * nonce they received after approving in Operanto. The extension claims the
+ * command, INDEPENDENTLY revalidates it against the live page, navigates
+ * exactly once via chrome.tabs.update (no injected clicking, no arbitrary
+ * URL from the model), captures a fresh snapshot, and reports the outcome —
+ * the server decides whether it verified. Then it stops.
+ */
+document.getElementById("navigate").addEventListener("click", async () => {
+  const nonce = document.getElementById("nonce").value.trim();
+  if (!nonce) return report("Paste the one-shot execution code from Operanto.");
+  let command;
+  try {
+    report("Claiming execution credential…");
+    ({ command } = await apiCall("navigate", { op: "claim", nonce }));
+  } catch (error) {
+    return report(`Refused: ${error.message}`);
+  }
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [{ result: live }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: inspectNavigationTarget,
+      args: [command.targetRef, command.linkName],
+    });
+    // Independent enforcement — the server's approval is not sufficient.
+    if (!mayExecuteNavigation(command, live)) {
+      await apiCall("navigate", {
+        op: "report",
+        actionId: command.actionId,
+        ok: false,
+        error: "extension_revalidation_failed",
+      });
+      return report(
+        "Refused: the page or the link changed since it was observed. Capture again.",
+      );
+    }
+    report("Navigating once…");
+    await chrome.tabs.update(tab.id, { url: command.expectedHref });
+    // Fresh post-navigation observation, so the server can verify.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const [{ result: after }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: extractPageSemantics,
+    });
+    await apiCall(
+      "snapshot",
+      buildPayload({ ...after, captureId: crypto.randomUUID() }),
+    );
+    const outcome = await apiCall("navigate", {
+      op: "report",
+      actionId: command.actionId,
+      ok: true,
+    });
+    report(`Navigation ${outcome.status} · verification ${outcome.verification}`);
+  } catch (error) {
+    await apiCall("navigate", {
+      op: "report",
+      actionId: command.actionId,
+      ok: false,
+      error: "execution_error",
+    }).catch(() => {});
     report(`Failed: ${error.message}`);
   }
 });

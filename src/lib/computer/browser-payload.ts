@@ -4,6 +4,11 @@ import {
   computerSemanticSchema,
   type ComputerSemanticElement,
 } from "@/lib/computer/policy";
+import {
+  SAFE_LINK_LIMITS,
+  classifySafeLink,
+  type SafeLink,
+} from "@/lib/computer/safe-link";
 
 /**
  * Authoritative server-side sanitizer for browser-bridge payloads (C2).
@@ -49,6 +54,30 @@ const browserPayloadSchema = z
       .max(BROWSER_PAYLOAD_LIMITS.captureIdMax)
       .regex(/^[A-Za-z0-9_-]+$/)
       .optional(),
+    /**
+     * C4: candidate anchors for safe navigation. The extension proposes;
+     * the server re-classifies every one under the shared safe-link policy
+     * and keeps ONLY those that pass. `href` here is whatever the anchor
+     * carried (possibly relative) — never trusted, always re-resolved.
+     */
+    links: z
+      .array(
+        z
+          .object({
+            ref: z
+              .string()
+              .min(1)
+              .max(SAFE_LINK_LIMITS.refMax)
+              .regex(/^[A-Za-z0-9_-]+$/),
+            name: z.string().min(1).max(SAFE_LINK_LIMITS.nameMax),
+            href: z.string().min(1).max(SAFE_LINK_LIMITS.hrefMax),
+            target: z.string().max(60).nullish(),
+            download: z.boolean().optional(),
+          })
+          .strict(),
+      )
+      .max(SAFE_LINK_LIMITS.perSnapshot * 4)
+      .optional(),
   })
   .strict();
 
@@ -59,6 +88,8 @@ export type SanitizedBrowserPayload = {
   visibleTextSummary: string | null;
   elements: ComputerSemanticElement[] | null;
   captureId: string | null;
+  /** C4: server-verified safe same-origin anchors, snapshot-scoped. */
+  safeLinks: SafeLink[] | null;
 };
 
 export class BrowserPayloadError extends Error {
@@ -101,6 +132,37 @@ export function sanitizeBrowserPayload(raw: unknown): SanitizedBrowserPayload {
   const parsed = browserPayloadSchema.parse(raw);
   const url = sanitizePageUrl(parsed.url);
   const text = parsed.visibleText?.trim() ?? "";
+
+  // C4: re-classify every proposed anchor against the FULL page URL (the
+  // stored url is stripped, so resolution uses what the extension reported)
+  // and keep only links that pass the shared safe-link policy. Unsafe
+  // candidates are dropped silently — they are simply not navigable, and
+  // a target that is not in this list can never be executed.
+  let safeLinks: SafeLink[] | null = null;
+  if (parsed.links?.length) {
+    const seen = new Set<string>();
+    const kept: SafeLink[] = [];
+    for (const candidate of parsed.links) {
+      if (kept.length >= SAFE_LINK_LIMITS.perSnapshot) break;
+      if (seen.has(candidate.ref)) continue;
+      const verdict = classifySafeLink({
+        href: candidate.href,
+        pageUrl: parsed.url,
+        target: candidate.target ?? null,
+        hasDownload: candidate.download ?? false,
+      });
+      if (!verdict.safe) continue;
+      seen.add(candidate.ref);
+      kept.push({
+        ref: candidate.ref,
+        role: "link",
+        name: candidate.name.replace(/\s+/g, " ").trim(),
+        href: verdict.url,
+      });
+    }
+    safeLinks = kept.length > 0 ? kept : null;
+  }
+
   return {
     url,
     pageTitle: parsed.title?.trim() ? parsed.title.trim() : null,
@@ -109,5 +171,6 @@ export function sanitizeBrowserPayload(raw: unknown): SanitizedBrowserPayload {
       : null,
     elements: parsed.elements ?? null,
     captureId: parsed.captureId ?? null,
+    safeLinks,
   };
 }
