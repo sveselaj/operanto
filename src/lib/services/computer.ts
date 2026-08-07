@@ -1,9 +1,15 @@
 import "server-only";
+import { createHash, randomBytes } from "node:crypto";
 import { Prisma, type ComputerAction, type ComputerActionType, type ComputerRiskTier, type ComputerSession, type ComputerStepRoute, type ComputerVerificationResult } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/rbac";
 import { scope, type OrgContext } from "@/lib/org-context";
-import { audit } from "@/lib/audit";
+import { audit, auditSystem } from "@/lib/audit";
+import { computerBridgeEnabled } from "@/lib/computer-flag";
+import {
+  BrowserPayloadError,
+  sanitizeBrowserPayload,
+} from "@/lib/computer/browser-payload";
 import { isLowConfidence } from "@/lib/ai/policy";
 import { conversationAccessWhere } from "@/lib/services/conversations";
 import { taskAccessWhere } from "@/lib/services/tasks";
@@ -639,6 +645,15 @@ export async function concludeComputerSession(
     data: { status: outcome, outcomeNote, concludedAt: new Date() },
   });
   if (moved.count === 0) throw new Error("Only a READY session can be concluded");
+  // A closed session invalidates its bridge authorization (C2).
+  await prisma.computerBridgeGrant.updateMany({
+    where: {
+      ...scope(ctx),
+      sessionId,
+      status: { in: ["PENDING", "ATTACHED"] },
+    },
+    data: { status: "REVOKED", detachedAt: new Date() },
+  });
   await audit(ctx, {
     eventType: "computer.session.concluded",
     targetType: "ComputerSession",
@@ -696,6 +711,15 @@ export async function cancelComputerSession(
         data: { status: "CANCELLED", decidedAt: new Date() },
       });
     }
+    // A cancelled session invalidates its bridge authorization (C2).
+    await tx.computerBridgeGrant.updateMany({
+      where: {
+        ...scope(ctx),
+        sessionId: session.id,
+        status: { in: ["PENDING", "ATTACHED"] },
+      },
+      data: { status: "REVOKED", detachedAt: new Date() },
+    });
   });
   await audit(ctx, {
     eventType: "computer.session.cancelled",
@@ -705,3 +729,270 @@ export async function cancelComputerSession(
     after: { status: "CANCELLED" },
   });
 }
+
+/* ── C2: browser bridge (read-only observation transport) ───────────── */
+
+/**
+ * The bridge is one-way observation. There is NO code path from Operanto
+ * back into the user's page: no click, no type, no navigate, no submit —
+ * those verbs do not exist anywhere in this module or the extension. The
+ * pairing token is the only credential: 32 random bytes handed to the user
+ * once, SHA-256 at rest, session-bound, hard-expiring, revoked when the
+ * session closes. Operanto never sees the target site's credentials.
+ */
+
+const BRIDGE_TOKEN_TTL_MS = 60 * 60_000;
+
+function hashBridgeToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex");
+}
+
+export class BridgeAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BridgeAuthError";
+  }
+}
+
+/**
+ * Mint a pairing token for a session. The raw token appears ONLY in this
+ * return value (for the user to paste into the extension) — it is never
+ * stored, logged, or audited. One active grant per session: prior open
+ * grants are revoked.
+ */
+export async function createComputerBridgeGrant(
+  ctx: OrgContext,
+  sessionId: string,
+): Promise<{ grantId: string; token: string; expiresAt: Date }> {
+  requirePermission(ctx.membership.role, "computer:operate");
+  if (!computerBridgeEnabled()) {
+    throw new Error("The Computer browser bridge is not enabled");
+  }
+  const session = await prisma.computerSession.findFirst({
+    where: { ...scope(ctx), id: sessionId },
+    select: { id: true, status: true },
+  });
+  if (!session) throw new Error("Computer session not found");
+  if (!OPEN_SESSION_STATUSES.includes(session.status)) {
+    throw new Error(`A bridge cannot attach to a ${session.status} session`);
+  }
+
+  const token = randomBytes(32).toString("base64url");
+  const grant = await prisma.$transaction(async (tx) => {
+    await tx.computerBridgeGrant.updateMany({
+      where: {
+        ...scope(ctx),
+        sessionId: session.id,
+        status: { in: ["PENDING", "ATTACHED"] },
+      },
+      data: { status: "REVOKED", detachedAt: new Date() },
+    });
+    return tx.computerBridgeGrant.create({
+      data: {
+        organisationId: ctx.organisation.id,
+        sessionId: session.id,
+        createdByMembershipId: ctx.membership.id,
+        tokenHash: hashBridgeToken(token),
+        expiresAt: new Date(Date.now() + BRIDGE_TOKEN_TTL_MS),
+      },
+    });
+  });
+  await audit(ctx, {
+    eventType: "computer.bridge.granted",
+    targetType: "ComputerBridgeGrant",
+    targetId: grant.id,
+    after: { sessionId: session.id, expiresAt: grant.expiresAt.toISOString() },
+  });
+  return { grantId: grant.id, token, expiresAt: grant.expiresAt };
+}
+
+/** Cockpit-side detach/revoke of a bridge grant. */
+export async function detachComputerBridge(
+  ctx: OrgContext,
+  grantId: string,
+): Promise<void> {
+  requirePermission(ctx.membership.role, "computer:operate");
+  const detached = await prisma.computerBridgeGrant.updateMany({
+    where: {
+      ...scope(ctx),
+      id: grantId,
+      status: { in: ["PENDING", "ATTACHED"] },
+    },
+    data: { status: "DETACHED", detachedAt: new Date() },
+  });
+  if (detached.count === 0) throw new Error("No open bridge grant to detach");
+  await audit(ctx, {
+    eventType: "computer.bridge.detached",
+    targetType: "ComputerBridgeGrant",
+    targetId: grantId,
+  });
+}
+
+type ResolvedGrant = NonNullable<
+  Awaited<ReturnType<typeof resolveGrantByToken>>
+>;
+
+function resolveGrantByToken(rawToken: string) {
+  return prisma.computerBridgeGrant.findUnique({
+    where: { tokenHash: hashBridgeToken(rawToken) },
+    include: {
+      session: {
+        select: {
+          id: true,
+          status: true,
+          organisationId: true,
+          customer: { select: { restrictedAt: true } },
+        },
+      },
+    },
+  });
+}
+
+function assertGrantUsable(grant: ResolvedGrant | null): asserts grant is ResolvedGrant {
+  if (!grant) throw new BridgeAuthError("Unknown bridge token");
+  if (grant.expiresAt.getTime() <= Date.now()) {
+    throw new BridgeAuthError("The bridge authorization has expired");
+  }
+}
+
+/**
+ * Extension-side attach: first use of the pairing token. Atomic claim —
+ * PENDING → ATTACHED exactly once, and only before expiry.
+ */
+export async function attachComputerBridgeByToken(
+  rawToken: string,
+): Promise<{ bridgeId: string; sessionId: string; expiresAt: Date }> {
+  if (!computerBridgeEnabled()) {
+    throw new BridgeAuthError("The Computer browser bridge is not enabled");
+  }
+  const grant = await resolveGrantByToken(rawToken);
+  assertGrantUsable(grant);
+  const claimed = await prisma.computerBridgeGrant.updateMany({
+    where: { id: grant.id, status: "PENDING", expiresAt: { gt: new Date() } },
+    data: { status: "ATTACHED", attachedAt: new Date() },
+  });
+  if (claimed.count === 0) {
+    throw new BridgeAuthError("The bridge token was already used or revoked");
+  }
+  await auditSystem(grant.organisationId, "SYSTEM", {
+    eventType: "computer.bridge.attached",
+    targetType: "ComputerBridgeGrant",
+    targetId: grant.id,
+    after: { sessionId: grant.sessionId },
+  });
+  return {
+    bridgeId: grant.id,
+    sessionId: grant.sessionId,
+    expiresAt: grant.expiresAt,
+  };
+}
+
+/** Extension-side detach: observation stops immediately. */
+export async function detachComputerBridgeByToken(
+  rawToken: string,
+): Promise<void> {
+  if (!computerBridgeEnabled()) {
+    throw new BridgeAuthError("The Computer browser bridge is not enabled");
+  }
+  const grant = await resolveGrantByToken(rawToken);
+  if (!grant) throw new BridgeAuthError("Unknown bridge token");
+  const detached = await prisma.computerBridgeGrant.updateMany({
+    where: { id: grant.id, status: { in: ["PENDING", "ATTACHED"] } },
+    data: { status: "DETACHED", detachedAt: new Date() },
+  });
+  if (detached.count > 0) {
+    await auditSystem(grant.organisationId, "SYSTEM", {
+      eventType: "computer.bridge.detached",
+      targetType: "ComputerBridgeGrant",
+      targetId: grant.id,
+      after: { sessionId: grant.sessionId },
+    });
+  }
+}
+
+/**
+ * Ingest one sanitized observation from an ATTACHED bridge. The payload is
+ * treated as hostile until `sanitizeBrowserPayload` accepts it; what is
+ * stored remains untrusted observation data. Replay-idempotent via the
+ * (bridgeId, clientCaptureId) unique — a retried POST returns the original
+ * snapshot instead of duplicating it.
+ */
+export async function recordBridgeSnapshot(
+  rawToken: string,
+  rawPayload: unknown,
+): Promise<{ snapshotId: string; sessionId: string; duplicate: boolean }> {
+  if (!computerBridgeEnabled()) {
+    throw new BridgeAuthError("The Computer browser bridge is not enabled");
+  }
+  const grant = await resolveGrantByToken(rawToken);
+  assertGrantUsable(grant);
+  if (grant.status !== "ATTACHED") {
+    throw new BridgeAuthError("The bridge is not attached");
+  }
+  if (!OPEN_SESSION_STATUSES.includes(grant.session.status)) {
+    throw new BridgeAuthError("The session is no longer open for observation");
+  }
+  if (grant.session.customer?.restrictedAt) {
+    // Art. 18: restriction halts observation exactly like other processing.
+    throw new BridgeAuthError(
+      "Processing for this customer is restricted — observation is paused",
+    );
+  }
+
+  const payload = sanitizeBrowserPayload(rawPayload);
+  try {
+    const snapshot = await prisma.computerSnapshot.create({
+      data: {
+        organisationId: grant.organisationId,
+        sessionId: grant.sessionId,
+        recordedByMembershipId: grant.createdByMembershipId,
+        bridgeId: grant.id,
+        clientCaptureId: payload.captureId,
+        url: payload.url,
+        pageTitle: payload.pageTitle,
+        visibleTextSummary: payload.visibleTextSummary,
+        semanticJson:
+          payload.elements === null
+            ? Prisma.DbNull
+            : (payload.elements as unknown as Prisma.InputJsonValue),
+      },
+    });
+    await prisma.computerBridgeGrant.update({
+      where: { id: grant.id },
+      data: { lastCaptureAt: new Date(), captureCount: { increment: 1 } },
+    });
+    // Ids only — the page's url/title/text/elements stay in domain storage.
+    await auditSystem(grant.organisationId, "SYSTEM", {
+      eventType: "computer.snapshot.recorded",
+      targetType: "ComputerSnapshot",
+      targetId: snapshot.id,
+      after: {
+        sessionId: grant.sessionId,
+        bridgeId: grant.id,
+        elementCount: payload.elements?.length ?? 0,
+      },
+    });
+    return { snapshotId: snapshot.id, sessionId: grant.sessionId, duplicate: false };
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002" &&
+      payload.captureId
+    ) {
+      const existing = await prisma.computerSnapshot.findFirst({
+        where: { bridgeId: grant.id, clientCaptureId: payload.captureId },
+        select: { id: true },
+      });
+      if (existing) {
+        return {
+          snapshotId: existing.id,
+          sessionId: grant.sessionId,
+          duplicate: true,
+        };
+      }
+    }
+    throw error;
+  }
+}
+
+export { BrowserPayloadError };

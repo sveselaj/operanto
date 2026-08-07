@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Operanto Computer Bridge (C2, read-only)",
+  "version": "0.2.0",
+  "description": "Share the CURRENT tab with an Operanto Computer session as a sanitized semantic snapshot. Observation only: this extension cannot click, type, navigate, or read form values, cookies, or storage.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "https://api.operanto.ai/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Share this tab with Operanto"
+  }
+}

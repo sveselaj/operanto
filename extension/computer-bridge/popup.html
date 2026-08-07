@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { font: 13px system-ui, sans-serif; width: 320px; padding: 12px; }
+      label { display: block; margin-top: 8px; font-weight: 600; }
+      input { width: 100%; box-sizing: border-box; margin-top: 2px; }
+      button { margin-top: 10px; margin-right: 6px; }
+      #status { margin-top: 10px; white-space: pre-wrap; color: #333; }
+      .note { margin-top: 10px; color: #666; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <strong>Operanto Computer Bridge</strong>
+    <div class="note">
+      Read-only: shares a sanitized semantic snapshot of THIS tab with the
+      Operanto session your pairing token belongs to. It cannot click, type,
+      or read your form values, cookies, or passwords.
+    </div>
+    <label for="apiBase">Operanto API base</label>
+    <input id="apiBase" placeholder="http://localhost:3000" />
+    <label for="token">Pairing token</label>
+    <input id="token" type="password" placeholder="paste the session's bridge token" />
+    <div>
+      <button id="capture">Share this tab</button>
+      <button id="detach">Detach</button>
+    </div>
+    <div id="status"></div>
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>

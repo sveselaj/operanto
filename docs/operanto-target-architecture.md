@@ -228,11 +228,14 @@ Architecture (ported from the legacy prototype, adapted to main):
 > date, separately authorized) delivered the dormant **domain
 > foundation** — session/plan/step/action/snapshot models, risk floors,
 > unified approval integration, `computer:read`/`computer:operate`, and
-> privacy lifecycle coverage. **No executor exists**: no browser, no
-> capture, no external effect, no UI. Decision record:
+> privacy lifecycle coverage. C2 (same date, separately authorized)
+> added the **read-only browser bridge**: explicit tab-share via an MV3
+> extension, session-bound short-lived tokens, authoritative server-side
+> sanitization, flag-gated off by default. **No executor exists**: no
+> click/type/navigate/submit, no external effect, no UI. Decision record:
 > `docs/operanto-computer-capability.md`; slice notes:
-> `docs/operanto-computer-c1.md`. Every execution slice requires explicit
-> authorization.
+> `docs/operanto-computer-c1.md`, `docs/operanto-computer-c2.md`. Every
+> execution slice requires explicit authorization.
 
 Mission: allow Operanto to safely observe and operate software interfaces
 when a trusted deterministic or API integration does not exist or is
@@ -287,10 +290,13 @@ Built last, on the shared spine — **not an isolated content generator**:
 - **Permissions** (additive to the 3-role matrix; expansion to more roles is
   a product decision): `conversations:view_all | view_assigned | reply |
   assign | manage`, `channels:manage`, `ai:run`, `approvals:decide`,
-  `growth:manage`, `templates:manage`. Computer C0 additionally
-  *reserves* (names only, nothing in `src/lib/rbac.ts` until C1):
-  `computer:read | operate | approve | admin` — see
-  `docs/operanto-computer-capability.md` §10.
+  `growth:manage`, `templates:manage`. Computer (since C1):
+  `computer:read` and `computer:operate` exist in `src/lib/rbac.ts`
+  (ADMIN + SUPERVISOR); `computer:approve` was **not** created —
+  decisions on Computer approvals reuse `approvals:decide`; and
+  `computer:admin` stays deferred until an actual configuration surface
+  requires it. Decision history: `docs/operanto-computer-capability.md`
+  §10 and `docs/operanto-computer-c1.md`.
 - **Privacy** (decision 9): `eraseCustomer` gains surfaces — Conversation
   subject/summary, Message bodies + attachments (blob deletion),
   ConversationNote, AIAction input/output, CustomerIdentity. Message-payload
@@ -342,3 +348,12 @@ COMPUTER_ACTION approvals through the unified gate, computer:read/operate
 (ADMIN+SUPERVISOR; approvals:decide reused for decisions), erasure/
 restriction/retention coverage, ids-only audit. No executor, no UI, no
 external effect. See docs/operanto-computer-c1.md.
+
+Computer C2 delivered (same date, separately authorized): read-only
+browser bridge, flag-gated off (OPERANTO_COMPUTER_BRIDGE_ENABLED) — MV3
+extension (explicit tab share, activeTab), ComputerBridgeGrant pairing
+tokens (SHA-256 at rest, 60-min expiry, revoked on session close),
+Bearer-only ingestion endpoints, authoritative server sanitization, and
+the dev-database guard (scripts/db-guard.ts) hardening migrations after
+the C1 incident. Observation is one-way; still no executor. See
+docs/operanto-computer-c2.md.
