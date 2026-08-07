@@ -357,3 +357,14 @@ Bearer-only ingestion endpoints, authoritative server sanitization, and
 the dev-database guard (scripts/db-guard.ts) hardening migrations after
 the C1 incident. Observation is one-way; still no executor. See
 docs/operanto-computer-c2.md.
+
+Computer C3 delivered (same date, separately authorized): page
+understanding + guide mode, flag-gated off
+(OPERANTO_COMPUTER_GUIDE_ENABLED, requires the bridge flag) —
+COMPUTER_PAGE_UNDERSTAND/COMPUTER_GUIDE on the existing Intelligence
+spine, untrusted-observation prompt envelope, deterministic grounding
+(model recommends, code binds to observed elements), observed vs
+inference vs guidance separation, minimal /computer workbench.
+Guidance only: Operanto explains pages and recommends where the HUMAN
+should look; no browser-side effect exists. See
+docs/operanto-computer-c3.md.

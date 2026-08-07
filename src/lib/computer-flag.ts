@@ -8,3 +8,30 @@
 export function computerBridgeEnabled(): boolean {
   return process.env.OPERANTO_COMPUTER_BRIDGE_ENABLED === "1";
 }
+
+/**
+ * Computer guide flag (C3) — page understanding + guide mode. Requires the
+ * bridge too: understanding without an observation source is not a product
+ * surface. Same rules as above: server-side, environment-only, default OFF.
+ */
+export function computerGuideEnabled(): boolean {
+  return (
+    process.env.OPERANTO_COMPUTER_GUIDE_ENABLED === "1" && computerBridgeEnabled()
+  );
+}
+
+/**
+ * LIVE-provider gate for Computer AI tasks (C3 hardening). Mock is always
+ * the safe default; a live provider additionally requires BOTH an explicit
+ * deployment opt-in and a pinned eval version that matches the code's
+ * current COMPUTER_LIVE_EVAL_VERSION. A changed computer prompt bumps that
+ * version, so live execution fails closed until the live injection-fixture
+ * suite has been rerun and the pin updated. Generic (non-Computer) AI
+ * behavior is unaffected.
+ */
+export function computerLiveApproved(expectedEvalVersion: string): boolean {
+  return (
+    process.env.OPERANTO_COMPUTER_LIVE_ENABLED === "1" &&
+    process.env.OPERANTO_COMPUTER_LIVE_EVAL_VERSION === expectedEvalVersion
+  );
+}

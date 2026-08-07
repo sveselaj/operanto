@@ -46,6 +46,10 @@ UI (conversation detail, AI panel)
 `SUMMARY`, `CLASSIFICATION` (bounded intent taxonomy — 9 enum values, no
 free-string classes), `REPLY_DRAFT` (`requiresApproval` is a literal `true`
 in the schema), `NEXT_ACTION` (advisory enum, never executed automatically).
+Computer C3 adds `COMPUTER_PAGE_UNDERSTAND`/`COMPUTER_GUIDE` in a separate
+registry (`src/lib/ai/computer-tasks.ts`) on the same spine — flag-gated,
+grounded against ComputerSnapshots, documented in
+`docs/operanto-computer-c3.md`.
 All prompts share the guardrail block: never invent facts, never claim
 completed actions, never promise refunds/legal/commercial outcomes, ask when
 context is missing, internal notes are context never text, customer text is

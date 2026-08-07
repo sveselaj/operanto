@@ -926,6 +926,10 @@ enum AITaskType {
   CLASSIFICATION
   REPLY_DRAFT
   NEXT_ACTION
+  /// Computer C3: grounded page understanding over a ComputerSnapshot.
+  COMPUTER_PAGE_UNDERSTAND
+  /// Computer C3: guide mode — question + suggested next step for the HUMAN.
+  COMPUTER_GUIDE
 }
 
 enum AIActionStatus {
@@ -986,6 +990,11 @@ model AIAction {
   usageJson               Json?
   providerRequestId       String?
   errorCode               String?
+  /// Computer C3: the session/snapshot a COMPUTER_* task analyzed.
+  /// Reference-based persistence — the snapshot stays the canonical copy of
+  /// the observation; AIAction never duplicates page text into inputSummary.
+  computerSessionId       String?
+  computerSnapshotId      String?
   /// Set when outputJson/inputSummary were redacted by erasure or retention.
   redactedAt              DateTime?
   createdAt               DateTime       @default(now())
@@ -995,12 +1004,15 @@ model AIAction {
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   customer     Customer?     @relation(fields: [customerId], references: [id], onDelete: Restrict)
   requestedBy  Membership?   @relation("AIActionRequester", fields: [requestedByMembershipId], references: [id], onDelete: SetNull)
+  computerSession  ComputerSession?  @relation(fields: [computerSessionId], references: [id], onDelete: SetNull)
+  computerSnapshot ComputerSnapshot? @relation(fields: [computerSnapshotId], references: [id], onDelete: SetNull)
   computerPlans   ComputerPlan[]   @relation("ComputerPlanAiSource")
   computerActions ComputerAction[] @relation("ComputerActionAiSource")
 
   @@index([organisationId, conversationId, createdAt])
   @@index([organisationId, createdAt])
   @@index([organisationId, redactedAt, createdAt])
+  @@index([computerSessionId])
 }
 
 /// One human decision gate. Slice 4 uses it for AI reply drafts; later
@@ -1067,7 +1079,7 @@ model AiConfiguration {
   periodRequestCount       Int          @default(0)
   periodTokenCount         Int          @default(0)
   periodEstimatedCostCents Int          @default(0)
-  permittedTaskTypes       AITaskType[] @default([SUMMARY, CLASSIFICATION, REPLY_DRAFT, NEXT_ACTION])
+  permittedTaskTypes       AITaskType[] @default([SUMMARY, CLASSIFICATION, REPLY_DRAFT, NEXT_ACTION, COMPUTER_PAGE_UNDERSTAND, COMPUTER_GUIDE])
   confidencePolicyVersion  String       @default("v1")
   /// Audit-only scalar (who last changed configuration); the full change is
   /// in AuditEvent.
@@ -1913,6 +1925,7 @@ model ComputerSession {
   actions   ComputerAction[]
   snapshots ComputerSnapshot[]
   bridges   ComputerBridgeGrant[]
+  aiActions AIAction[]
 
   @@index([organisationId, status, createdAt])
   @@index([organisationId, customerId])
@@ -2058,6 +2071,7 @@ model ComputerSnapshot {
 
   actionsBefore ComputerAction[] @relation("ActionBeforeSnapshot")
   actionsAfter  ComputerAction[] @relation("ActionAfterSnapshot")
+  aiActions     AIAction[]
 
   @@unique([bridgeId, clientCaptureId])
   @@index([organisationId, sessionId, createdAt])

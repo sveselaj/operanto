@@ -12,7 +12,9 @@ export type AITaskName =
   | "summarise_conversation"
   | "classify_conversation"
   | "draft_reply"
-  | "recommend_next_action";
+  | "recommend_next_action"
+  | "computer_page_understand"
+  | "computer_guide";
 
 export type AITaskDefinition<TInput, TOutput> = {
   name: AITaskName;

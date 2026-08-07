@@ -39,6 +39,7 @@ export const COCKPIT_PREFIXES = [
   "/crm",
   "/notifications",
   "/growth",
+  "/computer",
   "/integrations",
   "/settings",
   "/audit",

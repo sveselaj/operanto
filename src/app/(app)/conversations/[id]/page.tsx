@@ -92,7 +92,9 @@ export default async function ConversationDetailPage({
 
   const aiResults: AiResultView[] = aiActions.map((action) => ({
     id: action.id,
-    taskType: action.taskType,
+    // listAiActions filters to conversation task types; the cast narrows the
+    // Prisma enum accordingly.
+    taskType: action.taskType as AiResultView["taskType"],
     status: action.status,
     provider: action.provider,
     model: action.model,

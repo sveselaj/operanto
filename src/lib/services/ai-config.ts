@@ -25,6 +25,11 @@ export const ALL_TASK_TYPES: AITaskType[] = [
   "CLASSIFICATION",
   "REPLY_DRAFT",
   "NEXT_ACTION",
+  // Computer C3 (docs/operanto-computer-c3.md): additionally gated by the
+  // computer feature flags and computer:read — listing them here only makes
+  // them configurable per organisation like every other task type.
+  "COMPUTER_PAGE_UNDERSTAND",
+  "COMPUTER_GUIDE",
 ];
 
 export async function getAiConfiguration(ctx: OrgContext): Promise<AiConfiguration> {
