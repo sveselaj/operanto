@@ -57,6 +57,56 @@ const pillars = [
   },
 ] as const;
 
+/**
+ * The public capability model (docs/operanto-product-architecture.md).
+ * `status` is deliberately part of the data: a capability a customer
+ * cannot switch on today is never presented as if they could.
+ */
+const capabilities = [
+  {
+    name: "Memory",
+    status: "available",
+    detail:
+      "Customer identity and history, organisational knowledge, and the record of what was said, promised, and decided.",
+  },
+  {
+    name: "Conversations",
+    status: "available",
+    detail:
+      "Customer messages in one stream beside the records they concern, with assignment, internal notes, and handover between people.",
+  },
+  {
+    name: "Workflows",
+    status: "available",
+    detail:
+      "Tasks, approvals, assignments, and follow-ups with due times — every step audited.",
+  },
+  {
+    name: "Intelligence",
+    status: "available",
+    detail:
+      "Summaries, classification, drafted replies, and suggested next steps. A person reviews and decides before anything reaches a customer.",
+  },
+  {
+    name: "Integrations",
+    status: "available",
+    detail:
+      "Signed events from the systems that already run your business. They stay the system of record.",
+  },
+  {
+    name: "Growth",
+    status: "development",
+    detail:
+      "Brand and campaign tooling for outreach, built on the same customer context. In development.",
+  },
+  {
+    name: "Computer",
+    status: "validation",
+    detail:
+      "For software with no usable API: you share a browser tab, Operanto reads the page and recommends where to look next, and — only with your explicit approval — opens one link and verifies where it landed. In supervised validation, not generally available.",
+  },
+] as const;
+
 export default function HomePage() {
   return (
     <>
@@ -73,6 +123,12 @@ export default function HomePage() {
             for your customers. Every inquiry arrives with its history, every
             conversation can be picked up where it left off, and every
             commitment has a name and a due time next to it.
+          </p>
+          <p className="mt-4 max-w-2xl text-lg leading-relaxed text-muted-foreground">
+            It remembers who the customer is, what was promised, and what is
+            still open — then helps the responsible person do the next piece of
+            work in the systems they already use. People approve; Operanto
+            keeps the record.
           </p>
           <div className="mt-10 flex flex-wrap items-center gap-4">
             <Link
@@ -150,6 +206,47 @@ export default function HomePage() {
 
       <section className="border-b border-border">
         <div className="mx-auto w-full max-w-6xl px-6 py-16 sm:py-20">
+          <h2 className="max-w-2xl text-2xl font-semibold tracking-tight sm:text-3xl">
+            What Operanto does
+          </h2>
+          <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            One product, organised as capabilities. We say plainly which of
+            them you can use today and which are still being built — a
+            capability you cannot switch on is not a feature we will sell you.
+          </p>
+          <div className="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {capabilities.map((capability) => (
+              <div
+                key={capability.name}
+                className="rounded-lg border border-border bg-card p-5"
+              >
+                <div className="flex items-baseline justify-between gap-3">
+                  <h3 className="text-base font-semibold">{capability.name}</h3>
+                  <span
+                    className={
+                      capability.status === "available"
+                        ? "shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                        : "shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                    }
+                  >
+                    {capability.status === "available"
+                      ? "Available"
+                      : capability.status === "development"
+                        ? "In development"
+                        : "In validation"}
+                  </span>
+                </div>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                  {capability.detail}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="border-b border-border">
+        <div className="mx-auto w-full max-w-6xl px-6 py-16 sm:py-20">
           <div className="grid gap-12 lg:grid-cols-2">
             <div>
               <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
@@ -210,6 +307,15 @@ export default function HomePage() {
                   </span>{" "}
                   Nothing is sent to a customer without a person choosing to
                   send it. Responsibility stays human.
+                </li>
+                <li className="text-sm leading-relaxed text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    Not an agent that runs off on its own.
+                  </span>{" "}
+                  Where Operanto can act inside other software, it proposes one
+                  step at a time, waits for approval, does exactly that step,
+                  and checks the result. It cannot move money, change
+                  credentials, or submit forms.
                 </li>
               </ul>
             </div>
