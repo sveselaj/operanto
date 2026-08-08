@@ -331,9 +331,15 @@ export default function HomePage() {
             </h2>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
               Operanto is deployed with a small number of organisations at a
-              time, starting with real estate. If the way your customer
-              operations run today loses context between systems and people, we
-              would like to hear about it.
+              time, starting with{" "}
+              <Link
+                href="/industries"
+                className="font-medium text-primary underline-offset-4 hover:underline"
+              >
+                real estate
+              </Link>
+              . If the way your customer operations run today loses context
+              between systems and people, we would like to hear about it.
             </p>
             <div className="mt-6 flex flex-wrap items-center gap-4">
               <Link

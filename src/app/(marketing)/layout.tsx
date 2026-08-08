@@ -1,10 +1,16 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 
+/**
+ * Top navigation carries product and company dimensions plus /industries.
+ * A single vertical (e.g. /real-estate) is deliberately NOT a nav item: it
+ * narrows the perceived scope of the product and does not scale past one
+ * sector. That page stays published and is linked from /industries.
+ */
 const navLinks = [
   { href: "/product", label: "Product" },
   { href: "/how-it-works", label: "How it works" },
-  { href: "/real-estate", label: "Real estate" },
+  { href: "/industries", label: "Industries" },
   { href: "/security", label: "Security" },
   { href: "/about", label: "About" },
   { href: "/contact", label: "Contact" },
