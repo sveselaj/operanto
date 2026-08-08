@@ -31,6 +31,11 @@ const beliefs = [
     detail:
       "No invented customer counts, no projected results presented as achieved ones, no badges we have not earned. We would rather have a shorter page that is accurate.",
   },
+  {
+    title: "Guardrails before autonomy",
+    detail:
+      "We build the permission, approval, and audit layer first, and let the software act only as far as that layer can account for. Capability that arrives ahead of control is a liability, not a feature.",
+  },
 ] as const;
 
 export default function AboutPage() {
@@ -73,6 +78,15 @@ export default function AboutPage() {
               resolved. We work vertical by vertical, starting with real
               estate, implementing alongside the organisations that use it.
             </p>
+            <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+              The direction we are working toward is that Operanto does not
+              ask people to learn another application. It should hold the
+              context, understand the work, and help complete it in the
+              software a business already uses — with permissions, approvals
+              and an audit trail around every step. We are deliberate about
+              how far that goes: each increment of what the software may do on
+              its own is earned with evidence, not assumed.
+            </p>
           </div>
         </div>
       </section>
@@ -82,7 +96,7 @@ export default function AboutPage() {
           <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
             What we hold ourselves to
           </h2>
-          <div className="mt-10 grid gap-8 md:grid-cols-3">
+          <div className="mt-10 grid gap-8 md:grid-cols-2 lg:grid-cols-4">
             {beliefs.map((belief) => (
               <div key={belief.title} className="border-t border-border pt-6">
                 <h3 className="text-base font-semibold">{belief.title}</h3>

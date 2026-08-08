@@ -122,6 +122,59 @@ export default function ProductPage() {
 
       <section className="border-b border-border">
         <div className="mx-auto w-full max-w-6xl px-6 py-16 sm:py-20">
+          <h2 className="max-w-2xl text-2xl font-semibold tracking-tight sm:text-3xl">
+            What we are building next
+          </h2>
+          <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            These are real and running, but not yet switched on for customers.
+            We would rather tell you where they stand than imply you can buy
+            them today.
+          </p>
+          <div className="mt-10 grid gap-8 md:grid-cols-2">
+            <div className="rounded-lg border border-border bg-card p-6">
+              <div className="flex items-baseline justify-between gap-3">
+                <h3 className="text-base font-semibold">Growth</h3>
+                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                  In development
+                </span>
+              </div>
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                Brand and campaign tooling that works from the same customer
+                context as everything else, so outreach knows what already
+                happened with a person. Drafting and approval are separate
+                acts here too — nothing goes out because software decided it
+                should.
+              </p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-6">
+              <div className="flex items-baseline justify-between gap-3">
+                <h3 className="text-base font-semibold">Computer</h3>
+                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                  In supervised validation
+                </span>
+              </div>
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                Plenty of real work lives in software with no usable API — a
+                carrier portal, a bank screen, an old internal application. You
+                log in yourself and share the tab. Operanto reads the page,
+                combines it with what it already knows about the customer and
+                the case, and tells you where to look next.
+              </p>
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                It can then open <em>one</em> link — but only the specific link
+                you approved, only on the same site, and only after you say so.
+                Then it checks where the page actually landed and stops. It
+                cannot type, submit a form, move money, or change your
+                security settings, and it never sees your password for the
+                other system.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-b border-border">
+        <div className="mx-auto w-full max-w-6xl px-6 py-16 sm:py-20">
           <div className="grid gap-10 lg:grid-cols-[1fr_1fr]">
             <div>
               <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
