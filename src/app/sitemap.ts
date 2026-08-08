@@ -4,6 +4,7 @@ const MARKETING_PATHS = [
   "",
   "/product",
   "/how-it-works",
+  "/industries",
   "/real-estate",
   "/security",
   "/about",
